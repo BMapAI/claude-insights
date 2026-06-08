@@ -12,7 +12,7 @@
     --border: #272c38;
     --text: #e6e9ef;
     --muted: #8b93a7;
-    --accent: #d97757;       /* terracotta */
+    --accent: #d97757;
     --accent-2: #6ea8fe;
     --good: #5dd6a0;
     --opus: #d97757;
@@ -27,33 +27,18 @@
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
   }
-  a { color: var(--accent-2); }
+  a { color: var(--accent-2); cursor: pointer; }
 
-  /* Sidebar */
   #sidebar {
-    width: 320px;
-    min-width: 320px;
-    height: 100vh;
-    overflow-y: auto;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
+    width: 320px; min-width: 320px; height: 100vh; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
   }
-  .brand {
-    padding: 18px 18px 12px;
-    border-bottom: 1px solid var(--border);
-  }
+  .brand { padding: 18px 18px 12px; border-bottom: 1px solid var(--border); }
   .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
   .brand .sub { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-all; }
   .proj-list { padding: 8px; }
-  .proj {
-    padding: 11px 12px;
-    border-radius: 10px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    margin-bottom: 4px;
-  }
+  .proj { padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; }
   .proj:hover { background: var(--panel-2); }
   .proj.active { background: var(--panel-2); border-color: var(--accent); }
   .proj.all { border-color: var(--border); background: var(--panel-2); margin-bottom: 10px; }
@@ -62,15 +47,36 @@
   .proj .name .cost { color: var(--accent); font-variant-numeric: tabular-nums; }
   .proj .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; justify-content: space-between; }
 
-  /* Main */
-  #main { flex: 1; height: 100vh; overflow-y: auto; padding: 26px 32px; }
+  #main { flex: 1; height: 100vh; overflow-y: auto; }
+  .inner { padding: 0 32px 32px; }
+
+  /* Filter bar */
+  #filterbar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px 32px; background: rgba(15,17,21,.85); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .fb-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .presets { display: flex; gap: 6px; }
+  .presets button {
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 11px; font-size: 13px; cursor: pointer;
+  }
+  .presets button:hover { color: var(--text); }
+  .presets button.active { background: var(--accent); color: #1a1109; border-color: var(--accent); font-weight: 600; }
+  .dateinput {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 9px; font-size: 13px; color-scheme: dark;
+  }
+  .fb-dash { color: var(--muted); }
+
   .empty { color: var(--muted); display: grid; place-items: center; height: 60vh; text-align: center; }
+  .header { margin-top: 22px; }
   .header h2 { margin: 0 0 4px; font-size: 22px; }
   .header .path { color: var(--muted); font-size: 13px; word-break: break-all; }
-  .header .path .branch {
-    color: var(--good); border: 1px solid var(--border); border-radius: 6px;
-    padding: 1px 7px; margin-left: 8px; font-size: 11px;
-  }
+  .header .path .branch { color: var(--good); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; margin-left: 8px; font-size: 11px; }
+  .backlink { display: inline-block; margin: 18px 0 2px; font-size: 13px; }
 
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin: 22px 0; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px; }
@@ -83,21 +89,18 @@
   .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
   .section h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
 
-  /* Model split bar */
   .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--panel-2); }
   .split > div { height: 100%; }
   .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
   .legend .item { display: flex; align-items: center; gap: 7px; font-size: 13px; }
   .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
-  /* Daily chart */
   .chart { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding-top: 8px; }
-  .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 3px; }
-  .bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; transition: opacity .15s; }
+  .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 2px; }
+  .bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; }
   .bar:hover { opacity: .7; }
   .chart-x { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 6px; }
 
-  /* Tables */
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; }
@@ -107,14 +110,19 @@
   th.sorted { color: var(--accent); }
   .arrow { font-size: 10px; margin-left: 4px; color: var(--accent); }
   .title-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tools { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
-  .chip b { color: var(--accent); margin-left: 5px; }
-  .loading { color: var(--muted); }
   .row-link { cursor: pointer; }
   .row-link:hover { background: var(--panel-2); }
   .share { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; vertical-align: middle; }
   .share-fill { display: block; height: 100%; background: var(--accent); }
+
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
+  .chip b { color: var(--accent); margin-left: 5px; }
+  .loading { color: var(--muted); }
+
+  .prompt { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel-2); }
+  .prompt .when { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+  .prompt .text { white-space: pre-wrap; word-break: break-word; font-size: 13px; max-height: 220px; overflow: auto; }
 </style>
 </head>
 <body>
@@ -126,13 +134,29 @@
     <div class="proj-list" id="proj-list"><div class="loading" style="padding:12px">Scanning projects…</div></div>
   </aside>
   <main id="main">
-    <div class="empty" id="empty">
-      <div>
-        <div style="font-size:42px">⬡</div>
-        <p>Select a project on the left to see its cost &amp; activity overview.</p>
+    <div id="filterbar">
+      <span class="fb-label">Range</span>
+      <div class="presets" id="presets">
+        <button data-preset="all" class="active">All time</button>
+        <button data-preset="7">7d</button>
+        <button data-preset="30">30d</button>
+        <button data-preset="90">90d</button>
+        <button data-preset="month">This month</button>
       </div>
+      <span class="fb-label">Custom</span>
+      <input type="date" id="from" class="dateinput" />
+      <span class="fb-dash">–</span>
+      <input type="date" id="to" class="dateinput" />
     </div>
-    <div id="detail" style="display:none"></div>
+    <div class="inner">
+      <div class="empty" id="empty">
+        <div>
+          <div style="font-size:42px">⬡</div>
+          <p>Select a project on the left to see its cost &amp; activity overview.</p>
+        </div>
+      </div>
+      <div id="detail" style="display:none"></div>
+    </div>
   </main>
 
 <script>
@@ -148,8 +172,11 @@ function fmtTokens(n) {
 }
 function fmtDate(ts) {
   if (!ts) return '—';
-  const d = new Date(ts);
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 function relTime(ts) {
   if (!ts) return '—';
@@ -160,10 +187,54 @@ function relTime(ts) {
   if (diff < 30 * day) return Math.round(diff / day) + 'd ago';
   return fmtDate(ts);
 }
+function fmtDuration(start, end) {
+  if (!start || !end) return '—';
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (ms < 0) return '—';
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// --- State ------------------------------------------------------------------
 let PROJECTS = [];
-let activeId = null;
+let activeId = null;            // sidebar selection: '__all__' or folder id
+let view = { type: 'overview', projectId: null, sessionId: null };
+let range = { from: null, to: null };
+
+function qs() {
+  const p = new URLSearchParams();
+  if (range.from) p.set('from', range.from);
+  if (range.to) p.set('to', range.to);
+  const s = p.toString();
+  return s ? '?' + s : '';
+}
+
+// --- Date range -------------------------------------------------------------
+function localISO(d) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+function presetRange(name) {
+  const now = new Date();
+  const to = localISO(now);
+  if (name === 'all') return { from: null, to: null };
+  if (name === 'month') return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to };
+  const days = { '7': 6, '30': 29, '90': 89 }[name] || 0;
+  return { from: localISO(new Date(now.getTime() - days * 86400000)), to };
+}
+function setActivePreset(name) {
+  document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
+}
+function applyRange(newRange, presetName) {
+  range = newRange;
+  document.getElementById('from').value = newRange.from || '';
+  document.getElementById('to').value = newRange.to || '';
+  setActivePreset(presetName || null);
+  loadProjects().then(refresh);
+}
 
 // --- Sessions table sorting -------------------------------------------------
 const SESS_COLS = [
@@ -176,10 +247,7 @@ const SESS_COLS = [
 ];
 let sessData = [];
 let sessSort = { key: 'end', dir: 'desc' };
-
-function sessionTokens(s) {
-  return s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite;
-}
+function sessionTokens(s) { return s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite; }
 function sessSortVal(s, key) {
   if (key === 'title') return (s.title || '').toLowerCase();
   if (key === 'tokens') return sessionTokens(s);
@@ -199,7 +267,7 @@ function renderSessions() {
   });
   body.innerHTML = rows.map((s) => {
     const tk = sessionTokens(s);
-    return `<tr>
+    return `<tr class="row-link" data-sid="${esc(s.id)}">
       <td class="title-cell" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</td>
       <td class="num">${fmtNum(s.userPrompts)}</td>
       <td class="num">${fmtNum(s.toolUses)}</td>
@@ -208,6 +276,9 @@ function renderSessions() {
       <td class="num">${relTime(s.end)}</td>
     </tr>`;
   }).join('');
+  body.querySelectorAll('.row-link').forEach((node) =>
+    node.addEventListener('click', () => openSession(view.projectId, node.dataset.sid))
+  );
   document.querySelectorAll('#sess-head th').forEach((th) => {
     const active = th.dataset.key === key;
     th.classList.toggle('sorted', active);
@@ -215,19 +286,16 @@ function renderSessions() {
   });
 }
 function onSessHeader(key) {
-  if (sessSort.key === key) {
-    sessSort.dir = sessSort.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    sessSort = { key, dir: key === 'title' ? 'asc' : 'desc' };
-  }
+  if (sessSort.key === key) sessSort.dir = sessSort.dir === 'asc' ? 'desc' : 'asc';
+  else sessSort = { key, dir: key === 'title' ? 'asc' : 'desc' };
   renderSessions();
 }
 
-// --- Leaderboard table sorting (All projects view) --------------------------
+// --- Leaderboard table sorting ----------------------------------------------
 const LEAD_COLS = [
   { key: 'name', label: 'Project', num: false },
   { key: 'cost', label: 'Cost', num: true },
-  { key: null, label: 'Share', num: true }, // derived from cost — not sortable
+  { key: null, label: 'Share', num: true },
   { key: 'sessions', label: 'Sessions', num: true },
   { key: 'userPrompts', label: 'Prompts', num: true },
   { key: 'cacheSavings', label: 'Cache saved', num: true },
@@ -236,7 +304,6 @@ const LEAD_COLS = [
 let leadData = [];
 let leadMax = 1;
 let leadSort = { key: 'cost', dir: 'desc' };
-
 function leadSortVal(p, key) {
   if (key === 'name') return (p.name || '').toLowerCase();
   if (key === 'lastActive') return p.lastActive || '';
@@ -275,27 +342,48 @@ function renderLeaderboard() {
 }
 function onLeadHeader(key) {
   if (!key) return;
-  if (leadSort.key === key) {
-    leadSort.dir = leadSort.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    leadSort = { key, dir: key === 'name' ? 'asc' : 'desc' };
-  }
+  if (leadSort.key === key) leadSort.dir = leadSort.dir === 'asc' ? 'desc' : 'asc';
+  else leadSort = { key, dir: key === 'name' ? 'asc' : 'desc' };
   renderLeaderboard();
 }
 
-async function init() {
-  const res = await fetch('/api/projects');
-  const data = await res.json();
-  PROJECTS = data.projects;
-  document.getElementById('proj-dir').textContent = data.projectsDir;
-  renderProjectList();
-  if (PROJECTS.length) selectProject('__all__'); // default to the rollup
+// --- Shared render helpers --------------------------------------------------
+function modelSplit(costByFamily, total) {
+  const fams = Object.entries(costByFamily).sort((a, b) => b[1] - a[1]);
+  if (!fams.length || total <= 0) return '<div class="loading">No spend in range.</div>';
+  const bar = fams.map(([f, c]) => `<div style="width:${(c / total * 100).toFixed(2)}%;background:${MODEL_COLORS[f] || '#888'}"></div>`).join('');
+  const legend = fams.map(([f, c]) => `<span class="item"><span class="dot" style="background:${MODEL_COLORS[f] || '#888'}"></span>${esc(f)} — ${fmtUSD(c)} (${(c / total * 100).toFixed(0)}%)</span>`).join('');
+  return `<div class="split">${bar}</div><div class="legend">${legend}</div>`;
+}
+function dailyChart(daily) {
+  if (!daily.length) return '<div class="loading">No dated activity in range.</div>';
+  const max = Math.max(...daily.map((d) => d.cost), 0.0001);
+  const bars = daily.map((d) =>
+    `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs">
+       <div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>
+     </div>`).join('');
+  return `<div class="chart">${bars}</div>
+    <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
+}
+function toolChips(topTools) {
+  return topTools.length
+    ? topTools.slice(0, 24).map((t) => `<span class="chip">${esc(t.name)}<b>${fmtNum(t.count)}</b></span>`).join('')
+    : '<span class="loading">No tool calls recorded.</span>';
 }
 
+// --- Sidebar ----------------------------------------------------------------
+async function loadProjects() {
+  const res = await fetch('/api/projects' + qs());
+  const data = await res.json();
+  PROJECTS = data.projects;
+  document.getElementById('proj-dir').textContent = data.projectsDir + (data.pricingFromFile ? '  ·  pricing.json' : '');
+  renderProjectList();
+  return data;
+}
 function renderProjectList() {
   const el = document.getElementById('proj-list');
   if (!PROJECTS.length) {
-    el.innerHTML = '<div class="loading" style="padding:12px">No projects found.</div>';
+    el.innerHTML = '<div class="loading" style="padding:12px">No projects in range.</div>';
     return;
   }
   const grandTotal = PROJECTS.reduce((s, p) => s + p.cost, 0);
@@ -309,42 +397,56 @@ function renderProjectList() {
       <div class="name"><span class="title-cell">${esc(p.name)}</span><span class="cost">${fmtUSD(p.cost)}</span></div>
       <div class="meta"><span>${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts</span><span>${relTime(p.lastActive)}</span></div>
     </div>`).join('');
-  el.querySelectorAll('.proj').forEach((node) =>
-    node.addEventListener('click', () => selectProject(node.dataset.id))
-  );
+  el.querySelectorAll('.proj').forEach((node) => node.addEventListener('click', () => selectProject(node.dataset.id)));
 }
 
-async function selectProject(id) {
+// --- Navigation -------------------------------------------------------------
+function selectProject(id) {
   activeId = id;
+  view = { type: id === '__all__' ? 'overview' : 'project', projectId: id, sessionId: null };
   renderProjectList();
+  refresh();
+}
+function openSession(projectId, sessionId) {
+  view = { type: 'session', projectId, sessionId };
+  refresh();
+}
+async function refresh() {
   document.getElementById('empty').style.display = 'none';
   const detail = document.getElementById('detail');
   detail.style.display = 'block';
-  detail.innerHTML = '<div class="loading">Loading overview…</div>';
-  if (id === '__all__') {
-    const res = await fetch('/api/overview');
-    if (!res.ok) { detail.innerHTML = '<div class="loading">Failed to load overview.</div>'; return; }
-    renderOverview(await res.json());
-    return;
+  detail.innerHTML = '<div class="loading" style="margin-top:24px">Loading…</div>';
+  try {
+    if (view.type === 'overview') {
+      const res = await fetch('/api/overview' + qs());
+      if (!res.ok) throw new Error('overview');
+      renderOverview(await res.json());
+    } else if (view.type === 'project') {
+      const res = await fetch('/api/project/' + encodeURIComponent(view.projectId) + qs());
+      if (!res.ok) throw new Error('project');
+      renderDetail(await res.json());
+    } else if (view.type === 'session') {
+      const res = await fetch('/api/session/' + encodeURIComponent(view.projectId) + '/' + encodeURIComponent(view.sessionId));
+      if (!res.ok) throw new Error('session');
+      renderSession(await res.json());
+    }
+  } catch (e) {
+    detail.innerHTML = '<div class="loading" style="margin-top:24px">Failed to load (' + esc(e.message) + ').</div>';
   }
-  const res = await fetch('/api/project/' + encodeURIComponent(id));
-  if (!res.ok) { detail.innerHTML = '<div class="loading">Failed to load project.</div>'; return; }
-  renderDetail(await res.json());
 }
 
+// --- Views ------------------------------------------------------------------
 function renderOverview(d) {
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
-  const detail = document.getElementById('detail');
-  detail.innerHTML = `
+  document.getElementById('detail').innerHTML = `
     <div class="header">
       <h2>All projects</h2>
-      <div class="path">${fmtNum(d.projectCount)} projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
+      <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
     </div>
-
     <div class="cards">
-      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">across all projects</div></div>
+      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">in selected range</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
@@ -353,81 +455,36 @@ function renderOverview(d) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
-
-    <div class="section">
-      <h3>Spend by model</h3>
-      ${modelSplit(t.costByFamily, t.cost)}
-    </div>
-
-    <div class="section">
-      <h3>Daily spend — all projects</h3>
-      ${dailyChart(d.daily)}
-    </div>
-
-    <div class="section">
-      <h3>Top tools — all projects</h3>
-      <div class="tools">
-        ${d.topTools.length ? d.topTools.slice(0, 24).map((tl) => `<span class="chip">${esc(tl.name)}<b>${fmtNum(tl.count)}</b></span>`).join('') : '<span class="loading">No tool calls recorded.</span>'}
-      </div>
-    </div>
-
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    <div class="section"><h3>Daily spend — all projects</h3>${dailyChart(d.daily)}</div>
+    <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     <div class="section">
       <h3>Projects by spend (${d.projects.length})</h3>
       <table>
         <thead><tr id="lead-head">
-          ${LEAD_COLS.map((c) => {
-            const sortable = c.key !== null;
-            return `<th class="${sortable ? 'sortable ' : ''}${c.num ? 'num' : ''}"${sortable ? ` data-key="${c.key}"` : ''}>${c.label}${sortable ? '<span class="arrow"></span>' : ''}</th>`;
-          }).join('')}
+          ${LEAD_COLS.map((c) => { const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}"${s ? ` data-key="${c.key}"` : ''}>${c.label}${s ? '<span class="arrow"></span>' : ''}</th>`; }).join('')}
         </tr></thead>
         <tbody id="lead-body"></tbody>
       </table>
-    </div>
-  `;
-
+    </div>`;
   leadData = d.projects;
   leadMax = maxCost;
   leadSort = { key: 'cost', dir: 'desc' };
-  detail.querySelectorAll('#lead-head th').forEach((th) =>
-    th.addEventListener('click', () => onLeadHeader(th.dataset.key))
-  );
+  document.querySelectorAll('#lead-head th').forEach((th) => th.addEventListener('click', () => onLeadHeader(th.dataset.key)));
   renderLeaderboard();
-}
-
-function modelSplit(costByFamily, total) {
-  const fams = Object.entries(costByFamily).sort((a, b) => b[1] - a[1]);
-  if (!fams.length || total <= 0) return '<div class="split"></div>';
-  const bar = fams.map(([f, c]) =>
-    `<div style="width:${(c / total * 100).toFixed(2)}%;background:${MODEL_COLORS[f] || '#888'}"></div>`).join('');
-  const legend = fams.map(([f, c]) =>
-    `<span class="item"><span class="dot" style="background:${MODEL_COLORS[f] || '#888'}"></span>${esc(f)} — ${fmtUSD(c)} (${(c / total * 100).toFixed(0)}%)</span>`).join('');
-  return `<div class="split">${bar}</div><div class="legend">${legend}</div>`;
-}
-
-function dailyChart(daily) {
-  if (!daily.length) return '<div class="loading">No dated activity.</div>';
-  const max = Math.max(...daily.map((d) => d.cost), 0.0001);
-  const bars = daily.map((d) =>
-    `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs">
-       <div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>
-     </div>`).join('');
-  return `<div class="chart">${bars}</div>
-    <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
 }
 
 function renderDetail(d) {
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
-  const detail = document.getElementById('detail');
-  detail.innerHTML = `
+  document.getElementById('detail').innerHTML = `
     <div class="header">
       <h2>${esc(d.name)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
-
     <div class="cards">
       <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(t.start)} → ${fmtDate(t.end)}</div></div>
-      <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">${fmtNum(t.sessionsWithActivity)} with activity</div></div>
+      <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
       <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div><div class="hint">${fmtNum(t.assistantMessages)} assistant msgs</div></div>
@@ -435,41 +492,80 @@ function renderDetail(d) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
-
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    <div class="section"><h3>Daily spend</h3>${dailyChart(d.daily)}</div>
+    <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     <div class="section">
-      <h3>Spend by model</h3>
-      ${modelSplit(t.costByFamily, t.cost)}
-    </div>
-
-    <div class="section">
-      <h3>Daily spend</h3>
-      ${dailyChart(d.daily)}
-    </div>
-
-    <div class="section">
-      <h3>Top tools</h3>
-      <div class="tools">
-        ${d.topTools.length ? d.topTools.slice(0, 24).map((tl) => `<span class="chip">${esc(tl.name)}<b>${fmtNum(tl.count)}</b></span>`).join('') : '<span class="loading">No tool calls recorded.</span>'}
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Sessions (${d.sessions.length})</h3>
+      <h3>Sessions (${d.sessions.length}) — click a row for details</h3>
       <table>
         <thead><tr id="sess-head">
           ${SESS_COLS.map((c) => `<th class="sortable${c.num ? ' num' : ''}" data-key="${c.key}">${c.label}<span class="arrow"></span></th>`).join('')}
         </tr></thead>
         <tbody id="sess-body"></tbody>
       </table>
-    </div>
-  `;
-
+    </div>`;
   sessData = d.sessions;
   sessSort = { key: 'end', dir: 'desc' };
-  detail.querySelectorAll('#sess-head th').forEach((th) =>
-    th.addEventListener('click', () => onSessHeader(th.dataset.key))
-  );
+  document.querySelectorAll('#sess-head th').forEach((th) => th.addEventListener('click', () => onSessHeader(th.dataset.key)));
   renderSessions();
+}
+
+function renderSession(d) {
+  const t = d.totals;
+  const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
+  const proj = PROJECTS.find((p) => p.id === d.projectId);
+  const projName = proj ? proj.name : 'project';
+  const maxStep = Math.max(...d.timeline.map((x) => x.cost), 0.0001);
+  const timeline = d.timeline.length
+    ? `<div class="chart">${d.timeline.map((x) => `<div class="bar-wrap" title="${fmtDateTime(x.ts)} — ${fmtUSD(x.cost)} (cum ${fmtUSD(x.cumCost)})"><div class="bar" style="height:${(x.cost / maxStep * 142).toFixed(1)}px"></div></div>`).join('')}</div>
+       <div class="chart-x"><span>start</span><span>peak ${fmtUSD(maxStep)}/turn</span><span>end</span></div>`
+    : '<div class="loading">No priced turns.</div>';
+  document.getElementById('detail').innerHTML = `
+    <a class="backlink" id="sess-back">← ${esc(projName)}</a>
+    <div class="header">
+      <h2>${esc(d.title)}</h2>
+      <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="label">Cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(d.start)}</div></div>
+      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
+      <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div></div>
+      <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
+      <div class="card"><div class="label">Duration</div><div class="value">${fmtDuration(d.start, d.end)}</div><div class="hint">wall clock</div></div>
+      <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">${fmtTokens(t.tokens.cacheRead)} read</div></div>
+    </div>
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    <div class="section"><h3>Cost per turn</h3>${timeline}</div>
+    <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
+    <div class="section">
+      <h3>Prompts (${d.prompts.length})</h3>
+      ${d.prompts.length ? d.prompts.map((p, i) => `<div class="prompt"><div class="when">#${i + 1} · ${fmtDateTime(p.ts)}</div><div class="text">${esc(p.text)}</div></div>`).join('') : '<div class="loading">No user prompts recorded.</div>'}
+    </div>`;
+  document.getElementById('sess-back').addEventListener('click', () => selectProject(d.projectId));
+}
+
+// --- Init -------------------------------------------------------------------
+async function init() {
+  document.querySelectorAll('#presets button').forEach((b) =>
+    b.addEventListener('click', () => applyRange(presetRange(b.dataset.preset), b.dataset.preset))
+  );
+  ['from', 'to'].forEach((id) =>
+    document.getElementById(id).addEventListener('change', () => {
+      const from = document.getElementById('from').value || null;
+      const to = document.getElementById('to').value || null;
+      applyRange({ from, to }, null);
+    })
+  );
+
+  const data = await loadProjects();
+  if (data.bounds) {
+    ['from', 'to'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (data.bounds.min) el.min = data.bounds.min;
+      if (data.bounds.max) el.max = data.bounds.max;
+    });
+  }
+  if (PROJECTS.length) selectProject('__all__');
 }
 
 init().catch((e) => {

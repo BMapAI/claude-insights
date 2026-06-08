@@ -3,9 +3,9 @@
 /*
  * Claude Insights — ROI / cost analyzer for Claude Code projects.
  *
- * Reads the session transcripts under ~/.claude/projects, attributes token
- * usage to a per-model price, and exposes the aggregates over a tiny HTTP API.
- * No external dependencies — Node's standard library only.
+ * Reads the session transcripts under ~/.claude/projects, keeps per-day /
+ * per-model token counts, and prices them at query time (so date filtering and
+ * a live pricing.json both work without re-parsing). No external dependencies.
  */
 
 const http = require('http');
@@ -19,18 +19,48 @@ const PROJECTS_DIR =
   process.env.CLAUDE_PROJECTS_DIR ||
   path.join(os.homedir(), '.claude', 'projects');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const PRICING_FILE = process.env.PRICING_FILE || path.join(__dirname, 'pricing.json');
 
-// --- Pricing (USD per 1M tokens) --------------------------------------------
-// Source: Claude API model pricing. Cache reads bill at ~0.1x the input rate;
-// cache writes at 1.25x (5-minute TTL) or 2x (1-hour TTL).
-const PRICING = {
+// --- Pricing ----------------------------------------------------------------
+// USD per 1M tokens. Cache reads bill at ~0.1x input; cache writes at 1.25x
+// (5-minute TTL) or 2x (1-hour TTL). Overridable via pricing.json (hot-reloaded
+// on change) so users can match their actual rates without editing code.
+const DEFAULT_PRICING = {
   opus: { input: 5, output: 25 },
   sonnet: { input: 3, output: 15 },
   haiku: { input: 1, output: 5 },
+  cacheReadMultiplier: 0.1,
+  cacheWrite5mMultiplier: 1.25,
+  cacheWrite1hMultiplier: 2.0,
 };
-const CACHE_READ_MULT = 0.1;
-const CACHE_WRITE_5M_MULT = 1.25;
-const CACHE_WRITE_1H_MULT = 2.0;
+
+let pricingCache = { mtimeMs: null, value: DEFAULT_PRICING, fromFile: false };
+function getPricing() {
+  try {
+    const st = fs.statSync(PRICING_FILE);
+    if (pricingCache.mtimeMs === st.mtimeMs && pricingCache.fromFile) return pricingCache.value;
+    const raw = JSON.parse(fs.readFileSync(PRICING_FILE, 'utf8'));
+    const merged = {
+      ...DEFAULT_PRICING,
+      ...raw,
+      opus: { ...DEFAULT_PRICING.opus, ...(raw.opus || {}) },
+      sonnet: { ...DEFAULT_PRICING.sonnet, ...(raw.sonnet || {}) },
+      haiku: { ...DEFAULT_PRICING.haiku, ...(raw.haiku || {}) },
+    };
+    pricingCache = { mtimeMs: st.mtimeMs, value: merged, fromFile: true };
+    return merged;
+  } catch {
+    return DEFAULT_PRICING; // missing or invalid file → built-in defaults
+  }
+}
+function pricingIsFromFile() {
+  try {
+    fs.statSync(PRICING_FILE);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function modelFamily(model) {
   const m = (model || '').toLowerCase();
@@ -40,28 +70,56 @@ function modelFamily(model) {
   return 'opus'; // sensible default for unknown Claude models
 }
 
-function usageCost(u, family) {
-  const rate = PRICING[family] || PRICING.opus;
-  const inRate = rate.input / 1e6;
-  const outRate = rate.output / 1e6;
-  let c = 0;
-  c += (u.input_tokens || 0) * inRate;
-  c += (u.output_tokens || 0) * outRate;
-  c += (u.cache_read_input_tokens || 0) * inRate * CACHE_READ_MULT;
-  const cc = u.cache_creation || {};
-  const w5 = cc.ephemeral_5m_input_tokens;
-  const w1 = cc.ephemeral_1h_input_tokens;
-  if (w5 != null || w1 != null) {
-    c += (w5 || 0) * inRate * CACHE_WRITE_5M_MULT;
-    c += (w1 || 0) * inRate * CACHE_WRITE_1H_MULT;
-  } else {
-    c += (u.cache_creation_input_tokens || 0) * inRate * CACHE_WRITE_5M_MULT;
+function emptyBundle() {
+  return { input: 0, output: 0, cacheRead: 0, cw5: 0, cw1: 0, cwOther: 0 };
+}
+function addBundle(dst, src) {
+  dst.input += src.input;
+  dst.output += src.output;
+  dst.cacheRead += src.cacheRead;
+  dst.cw5 += src.cw5;
+  dst.cw1 += src.cw1;
+  dst.cwOther += src.cwOther;
+}
+
+// Price a { family: bundle } map at current rates.
+function priceBundles(byFamily) {
+  const P = getPricing();
+  let cost = 0;
+  let cacheSavings = 0;
+  const costByFamily = {};
+  const models = {};
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const [fam, b] of Object.entries(byFamily)) {
+    const rate = P[fam] || P.opus;
+    const inRate = rate.input / 1e6;
+    const outRate = rate.output / 1e6;
+    let c = 0;
+    c += b.input * inRate;
+    c += b.output * outRate;
+    c += b.cacheRead * inRate * P.cacheReadMultiplier;
+    c += b.cw5 * inRate * P.cacheWrite5mMultiplier;
+    c += b.cw1 * inRate * P.cacheWrite1hMultiplier;
+    c += b.cwOther * inRate * P.cacheWrite5mMultiplier;
+    cost += c;
+    costByFamily[fam] = (costByFamily[fam] || 0) + c;
+    cacheSavings += b.cacheRead * inRate * (1 - P.cacheReadMultiplier);
+    models[fam] = true;
+    tokens.input += b.input;
+    tokens.output += b.output;
+    tokens.cacheRead += b.cacheRead;
+    tokens.cacheWrite += b.cw5 + b.cw1 + b.cwOther;
   }
-  return c;
+  return { cost, costByFamily, cacheSavings, tokens, models: Object.keys(models) };
 }
 
 // --- Transcript parsing (cached by file mtime + size) -----------------------
-const sessionCache = new Map(); // filePath -> { mtimeMs, size, data }
+// Stores raw token counts per day per model family; cost is computed later.
+const sessionCache = new Map();
+
+function dayOf(ts, fallback) {
+  return (ts || fallback || '1970-01-01T00:00:00Z').slice(0, 10);
+}
 
 function parseSession(filePath) {
   let stat;
@@ -83,15 +141,7 @@ function parseSession(filePath) {
     gitBranch: null,
     start: null,
     end: null,
-    models: {}, // family -> message count
-    userPrompts: 0,
-    assistantMessages: 0,
-    toolUses: 0,
-    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    cost: 0,
-    costByFamily: {}, // family -> cost
-    tools: {}, // tool name -> count
-    daily: {}, // YYYY-MM-DD -> { cost, messages, userPrompts }
+    days: {}, // 'YYYY-MM-DD' -> { userPrompts, assistantMessages, toolUses, tools:{}, byFamily:{} }
   };
 
   let raw;
@@ -101,11 +151,16 @@ function parseSession(filePath) {
     return null;
   }
 
-  const touchDay = (ts) => {
-    if (!ts) return null;
-    const day = ts.slice(0, 10);
-    if (!data.daily[day]) data.daily[day] = { cost: 0, messages: 0, userPrompts: 0 };
-    return data.daily[day];
+  const getDay = (ts) => {
+    const key = dayOf(ts, data.start);
+    if (!data.days[key]) {
+      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {} };
+    }
+    return data.days[key];
+  };
+  const getFam = (day, fam) => {
+    if (!day.byFamily[fam]) day.byFamily[fam] = emptyBundle();
+    return day.byFamily[fam];
   };
 
   for (const line of raw.split('\n')) {
@@ -123,51 +178,44 @@ function parseSession(filePath) {
       if (!data.start || o.timestamp < data.start) data.start = o.timestamp;
       if (!data.end || o.timestamp > data.end) data.end = o.timestamp;
     }
-
-    if (o.type === 'ai-title' && o.aiTitle) {
-      data.title = o.aiTitle;
-    }
+    if (o.type === 'ai-title' && o.aiTitle) data.title = o.aiTitle;
 
     if (o.type === 'user') {
       const content = o.message && o.message.content;
-      // Count only genuine human prompts (string content), not tool_result turns.
       if (typeof content === 'string' && content.trim()) {
-        data.userPrompts += 1;
         if (!data.firstPrompt) data.firstPrompt = content;
-        const d = touchDay(o.timestamp);
-        if (d) d.userPrompts += 1;
+        getDay(o.timestamp).userPrompts += 1;
       }
     }
 
     if (o.type === 'assistant' && o.message) {
-      data.assistantMessages += 1;
       const msg = o.message;
       const family = modelFamily(msg.model);
-      data.models[family] = (data.models[family] || 0) + 1;
+      const day = getDay(o.timestamp);
+      day.assistantMessages += 1;
 
       if (Array.isArray(msg.content)) {
         for (const b of msg.content) {
           if (b && b.type === 'tool_use') {
-            data.toolUses += 1;
+            day.toolUses += 1;
             const name = b.name || 'unknown';
-            data.tools[name] = (data.tools[name] || 0) + 1;
+            day.tools[name] = (day.tools[name] || 0) + 1;
           }
         }
       }
 
       const u = msg.usage;
       if (u) {
-        data.tokens.input += u.input_tokens || 0;
-        data.tokens.output += u.output_tokens || 0;
-        data.tokens.cacheRead += u.cache_read_input_tokens || 0;
-        data.tokens.cacheWrite += u.cache_creation_input_tokens || 0;
-        const c = usageCost(u, family);
-        data.cost += c;
-        data.costByFamily[family] = (data.costByFamily[family] || 0) + c;
-        const d = touchDay(o.timestamp);
-        if (d) {
-          d.cost += c;
-          d.messages += 1;
+        const fb = getFam(day, family);
+        fb.input += u.input_tokens || 0;
+        fb.output += u.output_tokens || 0;
+        fb.cacheRead += u.cache_read_input_tokens || 0;
+        const cc = u.cache_creation || {};
+        if (cc.ephemeral_5m_input_tokens != null || cc.ephemeral_1h_input_tokens != null) {
+          fb.cw5 += cc.ephemeral_5m_input_tokens || 0;
+          fb.cw1 += cc.ephemeral_1h_input_tokens || 0;
+        } else {
+          fb.cwOther += u.cache_creation_input_tokens || 0;
         }
       }
     }
@@ -189,104 +237,7 @@ function listSessionFiles(projectPath) {
     .map((e) => path.join(projectPath, e.name));
 }
 
-function emptyTotals() {
-  return {
-    sessions: 0,
-    sessionsWithActivity: 0,
-    userPrompts: 0,
-    assistantMessages: 0,
-    toolUses: 0,
-    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    cost: 0,
-    costByFamily: {},
-    models: {},
-    start: null,
-    end: null,
-  };
-}
-
-function mergeSessionInto(t, s) {
-  t.sessions += 1;
-  if (s.assistantMessages > 0 || s.userPrompts > 0) t.sessionsWithActivity += 1;
-  t.userPrompts += s.userPrompts;
-  t.assistantMessages += s.assistantMessages;
-  t.toolUses += s.toolUses;
-  t.tokens.input += s.tokens.input;
-  t.tokens.output += s.tokens.output;
-  t.tokens.cacheRead += s.tokens.cacheRead;
-  t.tokens.cacheWrite += s.tokens.cacheWrite;
-  t.cost += s.cost;
-  for (const [f, c] of Object.entries(s.costByFamily)) {
-    t.costByFamily[f] = (t.costByFamily[f] || 0) + c;
-  }
-  for (const [f, n] of Object.entries(s.models)) {
-    t.models[f] = (t.models[f] || 0) + n;
-  }
-  if (s.start && (!t.start || s.start < t.start)) t.start = s.start;
-  if (s.end && (!t.end || s.end > t.end)) t.end = s.end;
-}
-
-// Cache savings: tokens served from cache would otherwise have cost full input
-// price; instead they cost ~0.1x. Saved = read tokens * inRate * 0.9.
-function cacheSavings(costByFamilyTokens) {
-  return costByFamilyTokens;
-}
-
-function projectName(folder, cwd) {
-  if (cwd) return path.basename(cwd) || cwd;
-  // Fallback: best-effort decode of the dash-encoded folder name.
-  return folder.replace(/^-/, '').replace(/-/g, '/');
-}
-
-function listProjects() {
-  let entries;
-  try {
-    entries = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const projects = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const folder = e.name;
-    const projectPath = path.join(PROJECTS_DIR, folder);
-    const files = listSessionFiles(projectPath);
-    if (files.length === 0) continue;
-
-    const totals = emptyTotals();
-    let cwd = null;
-    let savedFromCache = 0;
-    for (const f of files) {
-      const s = parseSession(f);
-      if (!s) continue;
-      if (s.cwd && !cwd) cwd = s.cwd;
-      mergeSessionInto(totals, s);
-      const fam = Object.keys(s.costByFamily)[0] || modelFamily(null);
-      const inRate = (PRICING[fam] || PRICING.opus).input / 1e6;
-      savedFromCache += s.tokens.cacheRead * inRate * (1 - CACHE_READ_MULT);
-    }
-
-    projects.push({
-      id: folder,
-      name: projectName(folder, cwd),
-      cwd: cwd || projectName(folder, null),
-      sessions: totals.sessions,
-      userPrompts: totals.userPrompts,
-      cost: totals.cost,
-      tokens: totals.tokens,
-      cacheSavings: savedFromCache,
-      lastActive: totals.end,
-      firstActive: totals.start,
-      models: totals.models,
-    });
-  }
-  // Most recently active first.
-  projects.sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''));
-  return projects;
-}
-
-// Resolve a project id to its directory, refusing anything that escapes
-// PROJECTS_DIR (path traversal) — ids are real folder names, never nested.
+// Refuse ids that escape PROJECTS_DIR (path traversal).
 function resolveProjectDir(folder) {
   const projectPath = path.join(PROJECTS_DIR, folder);
   const rel = path.relative(PROJECTS_DIR, projectPath);
@@ -296,18 +247,60 @@ function resolveProjectDir(folder) {
   return projectPath;
 }
 
-function projectDetail(folder) {
+function projectName(folder, cwd) {
+  if (cwd) return path.basename(cwd) || cwd;
+  return folder.replace(/^-/, '').replace(/-/g, '/');
+}
+
+// --- Date filtering ---------------------------------------------------------
+function inRange(day, from, to) {
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
+// Aggregate one parsed session over a date range into a single token bundle map
+// plus counts and tools. Returns null contribution if nothing in range.
+function aggregateSession(s, from, to) {
+  const byFamily = {};
+  const tools = {};
+  let userPrompts = 0;
+  let assistantMessages = 0;
+  let toolUses = 0;
+  let has = false;
+  for (const [day, d] of Object.entries(s.days)) {
+    if (!inRange(day, from, to)) continue;
+    if (d.userPrompts || d.assistantMessages) has = true;
+    userPrompts += d.userPrompts;
+    assistantMessages += d.assistantMessages;
+    toolUses += d.toolUses;
+    for (const [n, c] of Object.entries(d.tools)) tools[n] = (tools[n] || 0) + c;
+    for (const [fam, b] of Object.entries(d.byFamily)) {
+      if (!byFamily[fam]) byFamily[fam] = emptyBundle();
+      addBundle(byFamily[fam], b);
+    }
+  }
+  return { byFamily, tools, userPrompts, assistantMessages, toolUses, has };
+}
+
+// --- Project-level aggregation ---------------------------------------------
+function projectDetail(folder, from, to) {
   const projectPath = resolveProjectDir(folder);
   if (!projectPath) return null;
   const files = listSessionFiles(projectPath);
   if (files.length === 0) return null;
 
-  const totals = emptyTotals();
-  const daily = {}; // date -> { cost, messages, userPrompts }
-  const tools = {}; // tool -> count
+  const grand = {}; // family -> bundle
+  const tools = {};
+  const dayMap = {}; // date -> { byFamily, messages, userPrompts }
   let cwd = null;
   let gitBranch = null;
-  let savedFromCache = 0;
+  let userPrompts = 0;
+  let assistantMessages = 0;
+  let toolUses = 0;
+  let sessionsInRange = 0;
+  let dataStart = null;
+  let dataEnd = null;
   const sessions = [];
 
   for (const f of files) {
@@ -315,43 +308,55 @@ function projectDetail(folder) {
     if (!s) continue;
     if (s.cwd && !cwd) cwd = s.cwd;
     if (s.gitBranch && !gitBranch) gitBranch = s.gitBranch;
-    mergeSessionInto(totals, s);
 
-    const fam = Object.keys(s.costByFamily)[0] || modelFamily(null);
-    const inRate = (PRICING[fam] || PRICING.opus).input / 1e6;
-    savedFromCache += s.tokens.cacheRead * inRate * (1 - CACHE_READ_MULT);
-
-    for (const [day, v] of Object.entries(s.daily)) {
-      if (!daily[day]) daily[day] = { cost: 0, messages: 0, userPrompts: 0 };
-      daily[day].cost += v.cost;
-      daily[day].messages += v.messages;
-      daily[day].userPrompts += v.userPrompts;
-    }
-    for (const [name, n] of Object.entries(s.tools)) {
-      tools[name] = (tools[name] || 0) + n;
+    const agg = aggregateSession(s, from, to);
+    if (!agg.has) continue;
+    sessionsInRange += 1;
+    userPrompts += agg.userPrompts;
+    assistantMessages += agg.assistantMessages;
+    toolUses += agg.toolUses;
+    for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
+    for (const [fam, b] of Object.entries(agg.byFamily)) {
+      if (!grand[fam]) grand[fam] = emptyBundle();
+      addBundle(grand[fam], b);
     }
 
+    // Per-day rollup for the chart.
+    for (const [day, d] of Object.entries(s.days)) {
+      if (!inRange(day, from, to)) continue;
+      if (!dayMap[day]) dayMap[day] = { byFamily: {}, messages: 0, userPrompts: 0 };
+      dayMap[day].messages += d.assistantMessages;
+      dayMap[day].userPrompts += d.userPrompts;
+      for (const [fam, b] of Object.entries(d.byFamily)) {
+        if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
+        addBundle(dayMap[day].byFamily[fam], b);
+      }
+      if (!dataStart || day < dataStart) dataStart = day;
+      if (!dataEnd || day > dataEnd) dataEnd = day;
+    }
+
+    const priced = priceBundles(agg.byFamily);
     sessions.push({
       id: s.id,
       title: s.title || (s.firstPrompt ? s.firstPrompt.slice(0, 80) : '(untitled)'),
       firstPrompt: s.firstPrompt,
-      cost: s.cost,
-      userPrompts: s.userPrompts,
-      assistantMessages: s.assistantMessages,
-      toolUses: s.toolUses,
-      tokens: s.tokens,
-      models: s.models,
+      cost: priced.cost,
+      userPrompts: agg.userPrompts,
+      assistantMessages: agg.assistantMessages,
+      toolUses: agg.toolUses,
+      tokens: priced.tokens,
+      models: priced.models,
       start: s.start,
       end: s.end,
     });
   }
 
+  const totals = priceBundles(grand);
   sessions.sort((a, b) => (b.end || '').localeCompare(a.end || ''));
 
-  const dailyArr = Object.entries(daily)
-    .map(([date, v]) => ({ date, ...v }))
+  const daily = Object.entries(dayMap)
+    .map(([date, v]) => ({ date, cost: priceBundles(v.byFamily).cost, messages: v.messages, userPrompts: v.userPrompts }))
     .sort((a, b) => a.date.localeCompare(b.date));
-
   const topTools = Object.entries(tools)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
@@ -361,20 +366,32 @@ function projectDetail(folder) {
     name: projectName(folder, cwd),
     cwd: cwd || projectName(folder, null),
     gitBranch,
-    totals,
-    cacheSavings: savedFromCache,
-    perSession: {
-      cost: totals.sessionsWithActivity ? totals.cost / totals.sessionsWithActivity : 0,
-      prompt: totals.userPrompts ? totals.cost / totals.userPrompts : 0,
+    totals: {
+      cost: totals.cost,
+      costByFamily: totals.costByFamily,
+      tokens: totals.tokens,
+      models: totals.models,
+      userPrompts,
+      assistantMessages,
+      toolUses,
+      sessions: sessionsInRange,
+      sessionsTotal: files.length,
+      start: dataStart,
+      end: dataEnd,
     },
-    daily: dailyArr,
+    cacheSavings: totals.cacheSavings,
+    perSession: {
+      cost: sessionsInRange ? totals.cost / sessionsInRange : 0,
+      prompt: userPrompts ? totals.cost / userPrompts : 0,
+    },
+    daily,
     topTools,
     sessions,
   };
 }
 
-// Aggregate across every project into a single rollup view.
-function overview() {
+// --- All-projects rollup ----------------------------------------------------
+function overview(from, to) {
   let entries;
   try {
     entries = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true });
@@ -382,12 +399,17 @@ function overview() {
     return null;
   }
 
-  const totals = emptyTotals();
-  const daily = {}; // date -> { cost, messages, userPrompts }
-  const tools = {}; // tool -> count
-  let savedFromCache = 0;
+  const grand = {};
+  const tools = {};
+  const dayMap = {};
+  let userPrompts = 0;
+  let assistantMessages = 0;
+  let toolUses = 0;
+  let sessionCount = 0;
   let projectCount = 0;
-  const projects = []; // leaderboard rows
+  let dataStart = null;
+  let dataEnd = null;
+  const projects = [];
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
@@ -395,52 +417,69 @@ function overview() {
     const files = listSessionFiles(projectPath);
     if (files.length === 0) continue;
 
-    const pTotals = emptyTotals();
+    const pGrand = {};
+    let pSessions = 0;
+    let pPrompts = 0;
     let cwd = null;
-    let pSaved = 0;
+    let lastActive = null;
+    let active = false;
 
     for (const f of files) {
       const s = parseSession(f);
       if (!s) continue;
       if (s.cwd && !cwd) cwd = s.cwd;
-      mergeSessionInto(totals, s);
-      mergeSessionInto(pTotals, s);
+      if (s.end && (!lastActive || s.end > lastActive)) lastActive = s.end;
 
-      const fam = Object.keys(s.costByFamily)[0] || modelFamily(null);
-      const inRate = (PRICING[fam] || PRICING.opus).input / 1e6;
-      const sv = s.tokens.cacheRead * inRate * (1 - CACHE_READ_MULT);
-      savedFromCache += sv;
-      pSaved += sv;
-
-      for (const [day, v] of Object.entries(s.daily)) {
-        if (!daily[day]) daily[day] = { cost: 0, messages: 0, userPrompts: 0 };
-        daily[day].cost += v.cost;
-        daily[day].messages += v.messages;
-        daily[day].userPrompts += v.userPrompts;
+      const agg = aggregateSession(s, from, to);
+      if (!agg.has) continue;
+      active = true;
+      pSessions += 1;
+      pPrompts += agg.userPrompts;
+      for (const [fam, b] of Object.entries(agg.byFamily)) {
+        if (!pGrand[fam]) pGrand[fam] = emptyBundle();
+        addBundle(pGrand[fam], b);
+        if (!grand[fam]) grand[fam] = emptyBundle();
+        addBundle(grand[fam], b);
       }
-      for (const [name, n] of Object.entries(s.tools)) {
-        tools[name] = (tools[name] || 0) + n;
+      for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
+      userPrompts += agg.userPrompts;
+      assistantMessages += agg.assistantMessages;
+      toolUses += agg.toolUses;
+      sessionCount += 1;
+
+      for (const [day, d] of Object.entries(s.days)) {
+        if (!inRange(day, from, to)) continue;
+        if (!dayMap[day]) dayMap[day] = { byFamily: {}, messages: 0, userPrompts: 0 };
+        dayMap[day].messages += d.assistantMessages;
+        dayMap[day].userPrompts += d.userPrompts;
+        for (const [fam, b] of Object.entries(d.byFamily)) {
+          if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
+          addBundle(dayMap[day].byFamily[fam], b);
+        }
+        if (!dataStart || day < dataStart) dataStart = day;
+        if (!dataEnd || day > dataEnd) dataEnd = day;
       }
     }
 
-    projectCount += 1;
+    if (active) projectCount += 1;
+    const priced = priceBundles(pGrand);
     projects.push({
       id: e.name,
       name: projectName(e.name, cwd),
       cwd: cwd || projectName(e.name, null),
-      sessions: pTotals.sessions,
-      userPrompts: pTotals.userPrompts,
-      toolUses: pTotals.toolUses,
-      cost: pTotals.cost,
-      cacheSavings: pSaved,
-      lastActive: pTotals.end,
+      sessions: pSessions,
+      userPrompts: pPrompts,
+      cost: priced.cost,
+      cacheSavings: priced.cacheSavings,
+      lastActive,
     });
   }
 
-  projects.sort((a, b) => b.cost - a.cost);
+  const totals = priceBundles(grand);
+  projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
 
-  const dailyArr = Object.entries(daily)
-    .map(([date, v]) => ({ date, ...v }))
+  const daily = Object.entries(dayMap)
+    .map(([date, v]) => ({ date, cost: priceBundles(v.byFamily).cost, messages: v.messages, userPrompts: v.userPrompts }))
     .sort((a, b) => a.date.localeCompare(b.date));
   const topTools = Object.entries(tools)
     .map(([name, count]) => ({ name, count }))
@@ -448,15 +487,208 @@ function overview() {
 
   return {
     projectCount,
-    totals,
-    cacheSavings: savedFromCache,
-    perSession: {
-      cost: totals.sessionsWithActivity ? totals.cost / totals.sessionsWithActivity : 0,
-      prompt: totals.userPrompts ? totals.cost / totals.userPrompts : 0,
+    totals: {
+      cost: totals.cost,
+      costByFamily: totals.costByFamily,
+      tokens: totals.tokens,
+      models: totals.models,
+      userPrompts,
+      assistantMessages,
+      toolUses,
+      sessions: sessionCount,
+      start: dataStart,
+      end: dataEnd,
     },
-    daily: dailyArr,
+    cacheSavings: totals.cacheSavings,
+    perSession: {
+      cost: sessionCount ? totals.cost / sessionCount : 0,
+      prompt: userPrompts ? totals.cost / userPrompts : 0,
+    },
+    daily,
     topTools,
     projects,
+  };
+}
+
+// --- Sidebar list + global date bounds --------------------------------------
+function listProjects(from, to) {
+  let entries;
+  try {
+    entries = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true });
+  } catch {
+    return { projects: [], bounds: { min: null, max: null } };
+  }
+
+  const projects = [];
+  let minDate = null;
+  let maxDate = null;
+
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const projectPath = path.join(PROJECTS_DIR, e.name);
+    const files = listSessionFiles(projectPath);
+    if (files.length === 0) continue;
+
+    const grand = {};
+    let cwd = null;
+    let sessions = 0;
+    let prompts = 0;
+    let lastActive = null;
+
+    for (const f of files) {
+      const s = parseSession(f);
+      if (!s) continue;
+      if (s.cwd && !cwd) cwd = s.cwd;
+      if (s.start) {
+        const d = s.start.slice(0, 10);
+        if (!minDate || d < minDate) minDate = d;
+      }
+      if (s.end) {
+        const d = s.end.slice(0, 10);
+        if (!maxDate || d > maxDate) maxDate = d;
+        if (!lastActive || s.end > lastActive) lastActive = s.end;
+      }
+      const agg = aggregateSession(s, from, to);
+      if (!agg.has) continue;
+      sessions += 1;
+      prompts += agg.userPrompts;
+      for (const [fam, b] of Object.entries(agg.byFamily)) {
+        if (!grand[fam]) grand[fam] = emptyBundle();
+        addBundle(grand[fam], b);
+      }
+    }
+
+    const priced = priceBundles(grand);
+    projects.push({
+      id: e.name,
+      name: projectName(e.name, cwd),
+      cwd: cwd || projectName(e.name, null),
+      sessions,
+      userPrompts: prompts,
+      cost: priced.cost,
+      cacheSavings: priced.cacheSavings,
+      tokens: priced.tokens,
+      lastActive,
+    });
+  }
+
+  projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
+  return { projects, bounds: { min: minDate, max: maxDate } };
+}
+
+// --- Single-session drill-down ---------------------------------------------
+function sessionDetail(folder, sessionId) {
+  const dir = resolveProjectDir(folder);
+  if (!dir) return null;
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) return null;
+  const file = path.join(dir, sessionId + '.jsonl');
+  const rel = path.relative(dir, file);
+  if (rel.includes(path.sep) || rel.startsWith('..')) return null;
+  if (!fs.existsSync(file)) return null;
+
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+
+  const out = {
+    id: sessionId,
+    title: null,
+    firstPrompt: null,
+    cwd: null,
+    gitBranch: null,
+    start: null,
+    end: null,
+    prompts: [],
+    tools: {},
+    timeline: [],
+  };
+  const grand = {};
+  let cumCost = 0;
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let o;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (o.cwd && !out.cwd) out.cwd = o.cwd;
+    if (o.gitBranch && !out.gitBranch) out.gitBranch = o.gitBranch;
+    if (o.timestamp) {
+      if (!out.start || o.timestamp < out.start) out.start = o.timestamp;
+      if (!out.end || o.timestamp > out.end) out.end = o.timestamp;
+    }
+    if (o.type === 'ai-title' && o.aiTitle) out.title = o.aiTitle;
+
+    if (o.type === 'user') {
+      const content = o.message && o.message.content;
+      if (typeof content === 'string' && content.trim()) {
+        if (!out.firstPrompt) out.firstPrompt = content;
+        out.prompts.push({ ts: o.timestamp || null, text: content.slice(0, 4000) });
+      }
+    }
+
+    if (o.type === 'assistant' && o.message) {
+      const msg = o.message;
+      const family = modelFamily(msg.model);
+      if (Array.isArray(msg.content)) {
+        for (const b of msg.content) {
+          if (b && b.type === 'tool_use') {
+            const name = b.name || 'unknown';
+            out.tools[name] = (out.tools[name] || 0) + 1;
+          }
+        }
+      }
+      const u = msg.usage;
+      if (u) {
+        const fb = emptyBundle();
+        fb.input = u.input_tokens || 0;
+        fb.output = u.output_tokens || 0;
+        fb.cacheRead = u.cache_read_input_tokens || 0;
+        const cc = u.cache_creation || {};
+        if (cc.ephemeral_5m_input_tokens != null || cc.ephemeral_1h_input_tokens != null) {
+          fb.cw5 = cc.ephemeral_5m_input_tokens || 0;
+          fb.cw1 = cc.ephemeral_1h_input_tokens || 0;
+        } else {
+          fb.cwOther = u.cache_creation_input_tokens || 0;
+        }
+        const msgCost = priceBundles({ [family]: fb }).cost;
+        cumCost += msgCost;
+        out.timeline.push({ ts: o.timestamp || null, cost: msgCost, cumCost });
+        if (!grand[family]) grand[family] = emptyBundle();
+        addBundle(grand[family], fb);
+      }
+    }
+  }
+
+  const priced = priceBundles(grand);
+  return {
+    id: out.id,
+    projectId: folder,
+    title: out.title || (out.firstPrompt ? out.firstPrompt.slice(0, 80) : '(untitled)'),
+    firstPrompt: out.firstPrompt,
+    cwd: out.cwd || projectName(folder, null),
+    gitBranch: out.gitBranch,
+    start: out.start,
+    end: out.end,
+    totals: {
+      cost: priced.cost,
+      costByFamily: priced.costByFamily,
+      tokens: priced.tokens,
+      models: priced.models,
+      userPrompts: out.prompts.length,
+      toolUses: Object.values(out.tools).reduce((a, b) => a + b, 0),
+    },
+    cacheSavings: priced.cacheSavings,
+    prompts: out.prompts,
+    topTools: Object.entries(out.tools)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count),
+    timeline: out.timeline,
   };
 }
 
@@ -479,13 +711,11 @@ function sendFile(res, file) {
     }
     const ext = path.extname(file);
     const type =
-      ext === '.html'
-        ? 'text/html; charset=utf-8'
-        : ext === '.js'
-        ? 'text/javascript; charset=utf-8'
-        : ext === '.css'
-        ? 'text/css; charset=utf-8'
-        : 'application/octet-stream';
+      ext === '.html' ? 'text/html; charset=utf-8'
+      : ext === '.js' ? 'text/javascript; charset=utf-8'
+      : ext === '.css' ? 'text/css; charset=utf-8'
+      : ext === '.png' ? 'image/png'
+      : 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type });
     res.end(buf);
   });
@@ -494,30 +724,44 @@ function sendFile(res, file) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = decodeURIComponent(url.pathname);
+  const from = url.searchParams.get('from') || null;
+  const to = url.searchParams.get('to') || null;
 
   try {
     if (pathname === '/api/projects') {
+      const { projects, bounds } = listProjects(from, to);
       return sendJSON(res, 200, {
         projectsDir: PROJECTS_DIR,
-        pricing: PRICING,
-        projects: listProjects(),
+        pricing: getPricing(),
+        pricingFromFile: pricingIsFromFile(),
+        bounds,
+        projects,
       });
     }
     if (pathname === '/api/overview') {
-      const ov = overview();
+      const ov = overview(from, to);
       if (!ov) return sendJSON(res, 404, { error: 'no projects' });
       return sendJSON(res, 200, ov);
     }
+    if (pathname.startsWith('/api/session/')) {
+      const rest = pathname.slice('/api/session/'.length);
+      const slash = rest.indexOf('/');
+      if (slash < 0) return sendJSON(res, 400, { error: 'bad session path' });
+      const projectId = rest.slice(0, slash);
+      const sessionId = rest.slice(slash + 1);
+      const detail = sessionDetail(projectId, sessionId);
+      if (!detail) return sendJSON(res, 404, { error: 'session not found' });
+      return sendJSON(res, 200, detail);
+    }
     if (pathname.startsWith('/api/project/')) {
       const id = pathname.slice('/api/project/'.length);
-      const detail = projectDetail(id);
+      const detail = projectDetail(id, from, to);
       if (!detail) return sendJSON(res, 404, { error: 'project not found' });
       return sendJSON(res, 200, detail);
     }
     if (pathname === '/' || pathname === '/index.html') {
       return sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
     }
-    // Static assets under public/
     const safe = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
     const file = path.join(PUBLIC_DIR, safe);
     if (file.startsWith(PUBLIC_DIR) && fs.existsSync(file) && fs.statSync(file).isFile()) {
@@ -530,12 +774,8 @@ const server = http.createServer((req, res) => {
   }
 });
 
-// On a shared host, default to localhost so one user's prompts/costs aren't
-// exposed to everyone on the machine (and the network). Reach it via SSH tunnel,
-// or set HOST=0.0.0.0 to opt into LAN access. If PORT is unset, auto-pick a free
-// one so simultaneous users on the same box don't collide.
+// Localhost by default on shared hosts; auto-pick a free port when PORT unset.
 const portWasSet = process.env.PORT != null;
-
 function listen(port, triesLeft) {
   server.once('error', (err) => {
     if (err.code === 'EADDRINUSE' && !portWasSet && triesLeft > 0) {
@@ -559,5 +799,4 @@ function listen(port, triesLeft) {
     }
   });
 }
-
 listen(Number(PORT) || 4317, 50);

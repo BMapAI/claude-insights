@@ -10,9 +10,15 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 
 - **Per-project overview** — total cost, sessions, prompts, cost/prompt, tool calls,
   token usage, cache savings, spend-by-model split, daily-spend chart, top tools, and a
-  per-session table.
-- **All-projects rollup** — combined totals plus a projects-by-spend leaderboard
-  (click a row to drill in).
+  sortable per-session table.
+- **All-projects rollup** — combined totals plus a sortable projects-by-spend
+  leaderboard (click a row to drill in).
+- **Session drill-down** — click any session to see its prompts, cost-per-turn
+  timeline, tool usage, duration, and totals.
+- **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
+  across every view.
+- **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
+  restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
   present, so cache-write costs are exact rather than estimated.
 - **Read-only** — never writes to `~/.claude`; only reads the transcripts.
@@ -32,6 +38,7 @@ Configuration via environment variables:
 | `HOST` | `127.0.0.1` | Bind address. Localhost-only by default; set `0.0.0.0` for LAN access (no auth — see below). |
 | `PORT` | auto (`4317`, bumps if busy) | HTTP port. If unset, an in-use port auto-increments so multiple users on one host don't collide. Set it to pin a fixed port. |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where to scan for transcripts |
+| `PRICING_FILE` | `./pricing.json` | Path to the rates file (see Pricing below) |
 
 ## Team / shared-server use
 
@@ -66,28 +73,39 @@ install or a system-wide Node).
 
 ## Pricing model
 
-USD per 1M tokens. Cache reads bill at ~0.1× the input rate; cache writes at
-1.25× (5-minute TTL) or 2× (1-hour TTL).
+Rates live in `pricing.json` (USD per 1M tokens) and are **hot-reloaded** — edit
+the file and the next request reprices, no restart needed. Delete the file to fall
+back to the built-in defaults in `server.js`.
 
-| Model | Input | Output |
-|---|---|---|
-| Opus | $5 | $25 |
-| Sonnet | $3 | $15 |
-| Haiku | $1 | $5 |
+```json
+{
+  "opus":   { "input": 5, "output": 25 },
+  "sonnet": { "input": 3, "output": 15 },
+  "haiku":  { "input": 1, "output": 5 },
+  "cacheReadMultiplier": 0.1,
+  "cacheWrite5mMultiplier": 1.25,
+  "cacheWrite1hMultiplier": 2.0
+}
+```
 
-> **These figures are estimates, not your bill.** Rates are hard-coded (see
-> `PRICING` in `server.js`) from public list prices and may drift as models and
-> pricing change; unknown model names fall back to Opus rates. Numbers exclude
-> any negotiated discounts, batch pricing, or subscription plans. Use it for
-> relative comparison and trend-spotting, not invoice reconciliation. Edit the
-> `PRICING` table to match your actual rates.
+Cache reads bill at `cacheReadMultiplier` × the input rate; cache writes at the 5m
+or 1h multiplier (chosen per message from the transcript's `cache_creation`
+breakdown, falling back to 5m).
+
+> **These figures are estimates, not your bill.** Defaults are public list prices
+> and may drift as models/pricing change; unknown model names fall back to Opus
+> rates. Numbers exclude negotiated discounts, batch pricing, or subscription
+> plans. Use it for relative comparison and trend-spotting, not invoice
+> reconciliation — and edit `pricing.json` to match your actual rates.
 
 ## How it works
 
 - `server.js` — scans `~/.claude/projects/*`, parses each `.jsonl` session transcript,
-  and aggregates token usage into cost. Parsed sessions are cached by file mtime + size,
-  so only the first scan is slow. Three endpoints: `/api/projects`, `/api/overview`,
-  and `/api/project/:id`.
+  and keeps per-day / per-model token counts (cost is priced at query time, so date
+  filtering and `pricing.json` edits both take effect without re-parsing). Parsed
+  sessions are cached by file mtime + size, so only the first scan is slow. Endpoints:
+  `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
+  (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
 
 ## License

@@ -1,0 +1,9 @@
+{
+  "_comment": "USD per 1M tokens. Edit to match your actual rates; changes are picked up automatically (no restart). Delete this file to use built-in defaults.",
+  "opus": { "input": 5, "output": 25 },
+  "sonnet": { "input": 3, "output": 15 },
+  "haiku": { "input": 1, "output": 5 },
+  "cacheReadMultiplier": 0.1,
+  "cacheWrite5mMultiplier": 1.25,
+  "cacheWrite1hMultiplier": 2.0
+}
