@@ -223,6 +223,66 @@ function onSessHeader(key) {
   renderSessions();
 }
 
+// --- Leaderboard table sorting (All projects view) --------------------------
+const LEAD_COLS = [
+  { key: 'name', label: 'Project', num: false },
+  { key: 'cost', label: 'Cost', num: true },
+  { key: null, label: 'Share', num: true }, // derived from cost — not sortable
+  { key: 'sessions', label: 'Sessions', num: true },
+  { key: 'userPrompts', label: 'Prompts', num: true },
+  { key: 'cacheSavings', label: 'Cache saved', num: true },
+  { key: 'lastActive', label: 'Last active', num: true },
+];
+let leadData = [];
+let leadMax = 1;
+let leadSort = { key: 'cost', dir: 'desc' };
+
+function leadSortVal(p, key) {
+  if (key === 'name') return (p.name || '').toLowerCase();
+  if (key === 'lastActive') return p.lastActive || '';
+  return p[key] || 0;
+}
+function renderLeaderboard() {
+  const body = document.getElementById('lead-body');
+  if (!body) return;
+  const { key, dir } = leadSort;
+  const rows = leadData.slice().sort((a, b) => {
+    const va = leadSortVal(a, key), vb = leadSortVal(b, key);
+    let cmp;
+    if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+  body.innerHTML = rows.map((p) => `
+    <tr class="row-link" data-id="${esc(p.id)}">
+      <td class="title-cell" title="${esc(p.cwd)}">${esc(p.name)}</td>
+      <td class="num">${fmtUSD(p.cost)}</td>
+      <td class="num"><span class="share"><span class="share-fill" style="width:${(p.cost / leadMax * 100).toFixed(1)}%"></span></span></td>
+      <td class="num">${fmtNum(p.sessions)}</td>
+      <td class="num">${fmtNum(p.userPrompts)}</td>
+      <td class="num good">${fmtUSD(p.cacheSavings)}</td>
+      <td class="num">${relTime(p.lastActive)}</td>
+    </tr>`).join('');
+  body.querySelectorAll('.row-link').forEach((node) =>
+    node.addEventListener('click', () => selectProject(node.dataset.id))
+  );
+  document.querySelectorAll('#lead-head th').forEach((th) => {
+    const active = th.dataset.key && th.dataset.key === key;
+    th.classList.toggle('sorted', !!active);
+    const arrow = th.querySelector('.arrow');
+    if (arrow) arrow.textContent = active ? (dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+function onLeadHeader(key) {
+  if (!key) return;
+  if (leadSort.key === key) {
+    leadSort.dir = leadSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    leadSort = { key, dir: key === 'name' ? 'asc' : 'desc' };
+  }
+  renderLeaderboard();
+}
+
 async function init() {
   const res = await fetch('/api/projects');
   const data = await res.json();
@@ -314,27 +374,24 @@ function renderOverview(d) {
     <div class="section">
       <h3>Projects by spend (${d.projects.length})</h3>
       <table>
-        <thead><tr>
-          <th>Project</th><th class="num">Cost</th><th class="num">Share</th><th class="num">Sessions</th><th class="num">Prompts</th><th class="num">Cache saved</th><th class="num">Last active</th>
+        <thead><tr id="lead-head">
+          ${LEAD_COLS.map((c) => {
+            const sortable = c.key !== null;
+            return `<th class="${sortable ? 'sortable ' : ''}${c.num ? 'num' : ''}"${sortable ? ` data-key="${c.key}"` : ''}>${c.label}${sortable ? '<span class="arrow"></span>' : ''}</th>`;
+          }).join('')}
         </tr></thead>
-        <tbody>
-          ${d.projects.map((p) => `
-            <tr class="row-link" data-id="${esc(p.id)}">
-              <td class="title-cell" title="${esc(p.cwd)}">${esc(p.name)}</td>
-              <td class="num">${fmtUSD(p.cost)}</td>
-              <td class="num"><span class="share"><span class="share-fill" style="width:${(p.cost / maxCost * 100).toFixed(1)}%"></span></span></td>
-              <td class="num">${fmtNum(p.sessions)}</td>
-              <td class="num">${fmtNum(p.userPrompts)}</td>
-              <td class="num good">${fmtUSD(p.cacheSavings)}</td>
-              <td class="num">${relTime(p.lastActive)}</td>
-            </tr>`).join('')}
-        </tbody>
+        <tbody id="lead-body"></tbody>
       </table>
     </div>
   `;
-  detail.querySelectorAll('.row-link').forEach((node) =>
-    node.addEventListener('click', () => selectProject(node.dataset.id))
+
+  leadData = d.projects;
+  leadMax = maxCost;
+  leadSort = { key: 'cost', dir: 'desc' };
+  detail.querySelectorAll('#lead-head th').forEach((th) =>
+    th.addEventListener('click', () => onLeadHeader(th.dataset.key))
   );
+  renderLeaderboard();
 }
 
 function modelSplit(costByFamily, total) {
