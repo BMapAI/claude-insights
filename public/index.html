@@ -15,6 +15,7 @@
     --accent: #d97757;
     --accent-2: #6ea8fe;
     --good: #5dd6a0;
+    --warn: #e5683f;
     --opus: #d97757;
     --sonnet: #6ea8fe;
     --haiku: #c6a15b;
@@ -89,6 +90,11 @@
   .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
   .section h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
 
+  .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+  .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
+  .budgetbar .marker { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .8; }
+  .budgetcap { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
+  .budgetcap b { font-variant-numeric: tabular-nums; }
   .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--panel-2); }
   .split > div { height: 100%; }
   .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
@@ -365,6 +371,40 @@ function dailyChart(daily) {
   return `<div class="chart">${bars}</div>
     <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
 }
+function budgetSection(b) {
+  if (!b) return '';
+  const monthLabel = new Date(b.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const pace = `${b.daysElapsed} of ${b.daysInMonth} days elapsed`;
+  if (b.monthly == null) {
+    return `<div class="section">
+      <h3>This month — ${esc(monthLabel)}</h3>
+      <div class="cards" style="margin:0">
+        <div class="card"><div class="label">Month to date</div><div class="value cost">${fmtUSD(b.mtdCost)}</div><div class="hint">${pace}</div></div>
+        <div class="card"><div class="label">Projected (month end)</div><div class="value cost">${fmtUSD(b.projectedCost)}</div><div class="hint">at current pace</div></div>
+      </div>
+      <div class="hint" style="margin-top:12px">Set a budget to track it here — add <code>"monthlyBudget"</code> to <code>config.json</code> or set the <code>MONTHLY_BUDGET</code> env var.</div>
+    </div>`;
+  }
+  const usedW = Math.min(b.pctUsed * 100, 100);
+  const projW = Math.min(b.pctProjected * 100, 100);
+  const color = b.pctProjected > 1 ? 'var(--warn)' : (b.pctProjected > 0.9 ? 'var(--haiku)' : 'var(--good)');
+  const remColor = b.remaining < 0 ? 'var(--warn)' : 'var(--good)';
+  const over = b.pctProjected > 1;
+  return `<div class="section">
+    <h3>This month — ${esc(monthLabel)}</h3>
+    <div class="budgetbar">
+      <div class="fill" style="width:${usedW.toFixed(1)}%;background:${color}"></div>
+      <div class="marker" style="left:${projW.toFixed(1)}%" title="projected ${fmtUSD(b.projectedCost)}"></div>
+    </div>
+    <div class="budgetcap">
+      <span><b>${fmtUSD(b.mtdCost)}</b> spent <span class="loading">(${(b.pctUsed * 100).toFixed(0)}%)</span></span>
+      <span>projected <b style="color:${color}">${fmtUSD(b.projectedCost)}</b> <span class="loading">(${(b.pctProjected * 100).toFixed(0)}%)</span></span>
+      <span class="loading">budget ${fmtUSD(b.monthly)}</span>
+      <span style="color:${remColor}">${b.remaining >= 0 ? fmtUSD(b.remaining) + ' left' : fmtUSD(-b.remaining) + ' over'}</span>
+    </div>
+    ${over ? `<div class="hint" style="margin-top:10px;color:var(--warn)">⚠ On pace to exceed budget by ${fmtUSD(b.projectedCost - b.monthly)} — ${pace}.</div>` : `<div class="hint" style="margin-top:10px">On track — ${pace}.</div>`}
+  </div>`;
+}
 function toolChips(topTools) {
   return topTools.length
     ? topTools.slice(0, 24).map((t) => `<span class="chip">${esc(t.name)}<b>${fmtNum(t.count)}</b></span>`).join('')
@@ -445,6 +485,7 @@ function renderOverview(d) {
       <h2>All projects</h2>
       <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
     </div>
+    ${budgetSection(d.budget)}
     <div class="cards">
       <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">in selected range</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>

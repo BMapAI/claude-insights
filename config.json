@@ -1,0 +1,4 @@
+{
+  "_comment": "Optional settings, hot-reloaded on change. monthlyBudget is in USD and powers the 'This month' budget bar + burn-rate projection on the All-projects view. null = no budget (projection still shown). Override per-instance with the MONTHLY_BUDGET env var.",
+  "monthlyBudget": null
+}

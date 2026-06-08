@@ -17,6 +17,9 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   timeline, tool usage, duration, and totals.
 - **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
   across every view.
+- **Budget & burn-rate projection** — set a monthly budget and the All-projects view
+  shows month-to-date spend, a projected month-end total at the current pace, and a
+  budget bar that flags when you're trending over.
 - **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
@@ -39,6 +42,8 @@ Configuration via environment variables:
 | `PORT` | auto (`4317`, bumps if busy) | HTTP port. If unset, an in-use port auto-increments so multiple users on one host don't collide. Set it to pin a fixed port. |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where to scan for transcripts |
 | `PRICING_FILE` | `./pricing.json` | Path to the rates file (see Pricing below) |
+| `CONFIG_FILE` | `./config.json` | Path to the settings file (budget; see below) |
+| `MONTHLY_BUDGET` | _(unset)_ | Monthly budget in USD; overrides `config.json`. Powers the "This month" bar + projection. |
 
 ## Team / shared-server use
 
@@ -70,6 +75,23 @@ install or a system-wide Node).
 > Setting `HOST=0.0.0.0` exposes the dashboard — including your prompt text and
 > spend — to anyone who can reach the host on that port. There is no built-in
 > auth, so only do this behind a trusted network / restrictive security group.
+
+## Budget & projection
+
+The All-projects view has a **This month** panel showing month-to-date spend and a
+**projected month-end total** (linear extrapolation: `mtd / days_elapsed ×
+days_in_month`). It's always the current calendar month, regardless of the selected
+date range.
+
+Set a monthly budget to get a budget bar (used vs. projected, with an over-pace
+warning). Either edit `config.json`:
+
+```json
+{ "monthlyBudget": 500 }
+```
+
+…or set it per instance without touching files: `MONTHLY_BUDGET=500 node server.js`
+(the env var wins). Leave it unset/`null` to just show the projection.
 
 ## Pricing model
 

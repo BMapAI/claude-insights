@@ -20,6 +20,7 @@ const PROJECTS_DIR =
   path.join(os.homedir(), '.claude', 'projects');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PRICING_FILE = process.env.PRICING_FILE || path.join(__dirname, 'pricing.json');
+const CONFIG_FILE = process.env.CONFIG_FILE || path.join(__dirname, 'config.json');
 
 // --- Pricing ----------------------------------------------------------------
 // USD per 1M tokens. Cache reads bill at ~0.1x input; cache writes at 1.25x
@@ -60,6 +61,38 @@ function pricingIsFromFile() {
   } catch {
     return false;
   }
+}
+
+// Monthly budget (USD): MONTHLY_BUDGET env wins, else config.json's monthlyBudget.
+// null = no budget set (projection still shown). Read fresh each call (tiny file).
+function getMonthlyBudget() {
+  const env = process.env.MONTHLY_BUDGET;
+  if (env != null && env !== '') {
+    const n = Number(env);
+    return isFinite(n) ? n : null;
+  }
+  try {
+    const c = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (c.monthlyBudget == null) return null;
+    const n = Number(c.monthlyBudget);
+    return isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+// Current calendar month bounds (server local time) for budget/projection.
+function currentMonthInfo() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    monthStart: `${y}-${pad(m + 1)}-01`,
+    today: `${y}-${pad(m + 1)}-${pad(now.getDate())}`,
+    daysElapsed: now.getDate(),
+    daysInMonth: new Date(y, m + 1, 0).getDate(),
+  };
 }
 
 function modelFamily(model) {
@@ -402,6 +435,8 @@ function overview(from, to) {
   const grand = {};
   const tools = {};
   const dayMap = {};
+  const monthGrand = {}; // month-to-date tokens, independent of the selected range
+  const M = currentMonthInfo();
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
@@ -429,6 +464,16 @@ function overview(from, to) {
       if (!s) continue;
       if (s.cwd && !cwd) cwd = s.cwd;
       if (s.end && (!lastActive || s.end > lastActive)) lastActive = s.end;
+
+      // Month-to-date aggregation (independent of the selected range).
+      for (const [day, d] of Object.entries(s.days)) {
+        if (day >= M.monthStart && day <= M.today) {
+          for (const [fam, b] of Object.entries(d.byFamily)) {
+            if (!monthGrand[fam]) monthGrand[fam] = emptyBundle();
+            addBundle(monthGrand[fam], b);
+          }
+        }
+      }
 
       const agg = aggregateSession(s, from, to);
       if (!agg.has) continue;
@@ -478,6 +523,22 @@ function overview(from, to) {
   const totals = priceBundles(grand);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
 
+  const monthPriced = priceBundles(monthGrand);
+  const monthly = getMonthlyBudget();
+  const projectedCost = M.daysElapsed > 0 ? (monthPriced.cost / M.daysElapsed) * M.daysInMonth : monthPriced.cost;
+  const budget = {
+    monthly,
+    monthStart: M.monthStart,
+    today: M.today,
+    daysElapsed: M.daysElapsed,
+    daysInMonth: M.daysInMonth,
+    mtdCost: monthPriced.cost,
+    projectedCost,
+    remaining: monthly != null ? monthly - monthPriced.cost : null,
+    pctUsed: monthly ? monthPriced.cost / monthly : null,
+    pctProjected: monthly ? projectedCost / monthly : null,
+  };
+
   const daily = Object.entries(dayMap)
     .map(([date, v]) => ({ date, cost: priceBundles(v.byFamily).cost, messages: v.messages, userPrompts: v.userPrompts }))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -507,6 +568,7 @@ function overview(from, to) {
     daily,
     topTools,
     projects,
+    budget,
   };
 }
 
