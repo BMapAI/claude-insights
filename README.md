@@ -6,6 +6,10 @@ It reads the session transcripts under `~/.claude/projects`, attributes token us
 to per-model pricing, and serves a small web dashboard where you can pick a project
 (or view all at once) and see what it actually cost.
 
+![Claude Ledger — all-projects overview](docs/overview.png)
+
+<sub>Screenshot uses synthetic demo data.</sub>
+
 ## Features
 
 - **Per-project overview** — total cost, sessions, prompts, cost/prompt, tool calls,
