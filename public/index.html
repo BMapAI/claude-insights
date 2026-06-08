@@ -477,6 +477,15 @@ function toolChips(topTools) {
     ? topTools.slice(0, 24).map((t) => `<span class="chip">${esc(t.name)}<b>${fmtNum(t.count)}</b></span>`).join('')
     : '<span class="loading">No tool calls recorded.</span>';
 }
+// Spend attributed to a named driver (skill / MCP server) — chip shows its cost.
+// Rendered only when there's attributed spend; not all turns carry attribution.
+function spendSection(title, items, hint) {
+  if (!items || !items.length) return '';
+  const chips = items.slice(0, 24)
+    .map((t) => `<span class="chip">${esc(t.name)}<b>${fmtUSD(t.cost)}</b></span>`).join('');
+  return `<div class="section"><h3>${esc(title)}</h3><div class="tools">${chips}</div>
+    <div class="hint" style="margin-top:8px">${esc(hint)}</div></div>`;
+}
 
 // --- Sidebar ----------------------------------------------------------------
 async function loadProjects() {
@@ -567,6 +576,8 @@ function renderOverview(d) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
     <div class="section"><h3>Daily spend — all projects</h3>${dailyChart(d.daily)}</div>
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
+    ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
+    ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
     <div class="section">
       <h3>Projects by spend (${d.projects.length})</h3>
       <table>
@@ -606,6 +617,8 @@ function renderDetail(d) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
     <div class="section"><h3>Daily spend</h3>${dailyChart(d.daily)}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
+    ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
+    ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
     <div class="section">
       <h3>Sessions (${d.sessions.length}) — click a row for details</h3>
       <table>

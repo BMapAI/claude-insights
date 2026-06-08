@@ -147,6 +147,37 @@ function addBundle(dst, src) {
   dst.cwOther += src.cwOther;
 }
 
+// Build a token bundle from one message's usage block (5m/1h cache-write split
+// when present, else the lumped legacy field).
+function usageToBundle(u) {
+  const b = emptyBundle();
+  if (!u) return b;
+  b.input = u.input_tokens || 0;
+  b.output = u.output_tokens || 0;
+  b.cacheRead = u.cache_read_input_tokens || 0;
+  const cc = u.cache_creation || {};
+  if (cc.ephemeral_5m_input_tokens != null || cc.ephemeral_1h_input_tokens != null) {
+    b.cw5 = cc.ephemeral_5m_input_tokens || 0;
+    b.cw1 = cc.ephemeral_1h_input_tokens || 0;
+  } else {
+    b.cwOther = u.cache_creation_input_tokens || 0;
+  }
+  return b;
+}
+
+// Attribution maps are { name: { family: bundle } } — a token bundle per model
+// family so each name can be priced at its own blended rate.
+function nestFam(map, name, fam) {
+  if (!map[name]) map[name] = {};
+  if (!map[name][fam]) map[name][fam] = emptyBundle();
+  return map[name][fam];
+}
+function mergeByName(dst, src) {
+  for (const [name, byFam] of Object.entries(src)) {
+    for (const [fam, b] of Object.entries(byFam)) addBundle(nestFam(dst, name, fam), b);
+  }
+}
+
 // Price a { family: bundle } map at current rates.
 function priceBundles(byFamily) {
   const P = getPricing();
@@ -176,6 +207,17 @@ function priceBundles(byFamily) {
     tokens.cacheWrite += b.cw5 + b.cw1 + b.cwOther;
   }
   return { cost, costByFamily, cacheSavings, tokens, models: Object.keys(models) };
+}
+
+// Price a { name: { family: bundle } } attribution map into a cost-sorted list.
+function priceByName(byName) {
+  return Object.entries(byName)
+    .map(([name, byFam]) => {
+      const p = priceBundles(byFam);
+      const tk = p.tokens;
+      return { name, cost: p.cost, tokens: tk.input + tk.output + tk.cacheRead + tk.cacheWrite };
+    })
+    .sort((a, b) => b.cost - a.cost);
 }
 
 // Efficiency ratios + cost composition + what-if repricing, from a { family: bundle } map.
@@ -261,7 +303,7 @@ function parseSession(filePath) {
   const getDay = (ts) => {
     const key = dayOf(ts, data.start);
     if (!data.days[key]) {
-      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {} };
+      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {}, bySkill: {}, byMcp: {} };
     }
     return data.days[key];
   };
@@ -313,17 +355,12 @@ function parseSession(filePath) {
 
       const u = msg.usage;
       if (u) {
-        const fb = getFam(day, family);
-        fb.input += u.input_tokens || 0;
-        fb.output += u.output_tokens || 0;
-        fb.cacheRead += u.cache_read_input_tokens || 0;
-        const cc = u.cache_creation || {};
-        if (cc.ephemeral_5m_input_tokens != null || cc.ephemeral_1h_input_tokens != null) {
-          fb.cw5 += cc.ephemeral_5m_input_tokens || 0;
-          fb.cw1 += cc.ephemeral_1h_input_tokens || 0;
-        } else {
-          fb.cwOther += u.cache_creation_input_tokens || 0;
-        }
+        const bundle = usageToBundle(u);
+        addBundle(getFam(day, family), bundle);
+        // Attribute the same tokens to the skill / MCP server that drove the turn,
+        // when Claude Code tagged the message. Both ride on usage-bearing messages.
+        if (o.attributionSkill) addBundle(nestFam(day.bySkill, o.attributionSkill, family), bundle);
+        if (o.attributionMcpServer) addBundle(nestFam(day.byMcp, o.attributionMcpServer, family), bundle);
       }
     }
   }
@@ -370,6 +407,8 @@ function inRange(day, from, to) {
 // plus counts and tools. Returns null contribution if nothing in range.
 function aggregateSession(s, from, to) {
   const byFamily = {};
+  const bySkill = {};
+  const byMcp = {};
   const tools = {};
   let userPrompts = 0;
   let assistantMessages = 0;
@@ -386,8 +425,10 @@ function aggregateSession(s, from, to) {
       if (!byFamily[fam]) byFamily[fam] = emptyBundle();
       addBundle(byFamily[fam], b);
     }
+    mergeByName(bySkill, d.bySkill || {});
+    mergeByName(byMcp, d.byMcp || {});
   }
-  return { byFamily, tools, userPrompts, assistantMessages, toolUses, has };
+  return { byFamily, bySkill, byMcp, tools, userPrompts, assistantMessages, toolUses, has };
 }
 
 // --- Project-level aggregation ---------------------------------------------
@@ -398,6 +439,8 @@ function projectDetail(folder, from, to) {
   if (files.length === 0) return null;
 
   const grand = {}; // family -> bundle
+  const bySkill = {}; // skill name -> family -> bundle
+  const byMcp = {}; // mcp server name -> family -> bundle
   const tools = {};
   const dayMap = {}; // date -> { byFamily, messages, userPrompts }
   const prev = previousPeriod(from, to);
@@ -441,6 +484,8 @@ function projectDetail(folder, from, to) {
       if (!grand[fam]) grand[fam] = emptyBundle();
       addBundle(grand[fam], b);
     }
+    mergeByName(bySkill, agg.bySkill);
+    mergeByName(byMcp, agg.byMcp);
 
     // Per-day rollup for the chart.
     for (const [day, d] of Object.entries(s.days)) {
@@ -508,6 +553,8 @@ function projectDetail(folder, from, to) {
     },
     daily,
     topTools,
+    topSkills: priceByName(bySkill),
+    topMcp: priceByName(byMcp),
     sessions,
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
@@ -524,6 +571,8 @@ function overview(from, to) {
   }
 
   const grand = {};
+  const bySkill = {}; // skill name -> family -> bundle
+  const byMcp = {}; // mcp server name -> family -> bundle
   const tools = {};
   const dayMap = {};
   const monthGrand = {}; // month-to-date tokens, independent of the selected range
@@ -596,6 +645,8 @@ function overview(from, to) {
         addBundle(grand[fam], b);
       }
       for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
+      mergeByName(bySkill, agg.bySkill);
+      mergeByName(byMcp, agg.byMcp);
       userPrompts += agg.userPrompts;
       assistantMessages += agg.assistantMessages;
       toolUses += agg.toolUses;
@@ -681,6 +732,8 @@ function overview(from, to) {
     },
     daily,
     topTools,
+    topSkills: priceByName(bySkill),
+    topMcp: priceByName(byMcp),
     projects,
     budget,
     delta,
