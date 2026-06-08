@@ -81,17 +81,20 @@ function getMonthlyBudget() {
   }
 }
 
-// Current calendar month bounds (server local time) for budget/projection.
+// Current calendar month bounds for budget/projection. Computed in UTC so the
+// month window and "today" align with the day-keys, which come from slicing the
+// transcripts' ISO-Z (UTC) timestamps (see dayOf). Using local time here would
+// drift off-by-one against those keys on any non-UTC host.
 function currentMonthInfo() {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
   const pad = (n) => String(n).padStart(2, '0');
   return {
     monthStart: `${y}-${pad(m + 1)}-01`,
-    today: `${y}-${pad(m + 1)}-${pad(now.getDate())}`,
-    daysElapsed: now.getDate(),
-    daysInMonth: new Date(y, m + 1, 0).getDate(),
+    today: `${y}-${pad(m + 1)}-${pad(now.getUTCDate())}`,
+    daysElapsed: now.getUTCDate(),
+    daysInMonth: new Date(Date.UTC(y, m + 1, 0)).getUTCDate(),
   };
 }
 
