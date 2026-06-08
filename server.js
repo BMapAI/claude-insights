@@ -14,6 +14,7 @@ const path = require('path');
 const os = require('os');
 
 const PORT = process.env.PORT || 4317;
+const HOST = process.env.HOST || '127.0.0.1';
 const PROJECTS_DIR =
   process.env.CLAUDE_PROJECTS_DIR ||
   path.join(os.homedir(), '.claude', 'projects');
@@ -517,7 +518,34 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Claude Insights running at http://localhost:${PORT}`);
-  console.log(`Reading projects from: ${PROJECTS_DIR}`);
-});
+// On a shared host, default to localhost so one user's prompts/costs aren't
+// exposed to everyone on the machine (and the network). Reach it via SSH tunnel,
+// or set HOST=0.0.0.0 to opt into LAN access. If PORT is unset, auto-pick a free
+// one so simultaneous users on the same box don't collide.
+const portWasSet = process.env.PORT != null;
+
+function listen(port, triesLeft) {
+  server.once('error', (err) => {
+    if (err.code === 'EADDRINUSE' && !portWasSet && triesLeft > 0) {
+      listen(port + 1, triesLeft - 1);
+    } else if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is already in use. Set PORT=<a free port> and retry.`);
+      process.exit(1);
+    } else {
+      console.error(err);
+      process.exit(1);
+    }
+  });
+  server.listen(port, HOST, () => {
+    const shown = HOST === '0.0.0.0' ? 'localhost' : HOST;
+    console.log(`Claude Insights → http://${shown}:${port}`);
+    console.log(`Reading projects from: ${PROJECTS_DIR}`);
+    if (HOST === '127.0.0.1') {
+      console.log(
+        `Localhost-only. From your laptop:  ssh -L ${port}:localhost:${port} <you>@<this-host>  then open http://localhost:${port}`
+      );
+    }
+  });
+}
+
+listen(Number(PORT) || 4317, 50);
