@@ -178,6 +178,48 @@ function priceBundles(byFamily) {
   return { cost, costByFamily, cacheSavings, tokens, models: Object.keys(models) };
 }
 
+// Efficiency ratios + cost composition + what-if repricing, from a { family: bundle } map.
+function efficiencyStats(grand, userPrompts, toolUses) {
+  const P = getPricing();
+  const priced = priceBundles(grand);
+  const tk = priced.tokens;
+  const total = tk.input + tk.output + tk.cacheRead + tk.cacheWrite;
+  const inputSide = tk.input + tk.cacheRead + tk.cacheWrite;
+
+  // Real cost composition: price each token category at each family's own rate.
+  const composition = { output: 0, input: 0, cacheRead: 0, cacheWrite: 0 };
+  const agg = emptyBundle();
+  for (const [fam, b] of Object.entries(grand)) {
+    const rate = P[fam] || P.opus;
+    const inR = rate.input / 1e6;
+    const outR = rate.output / 1e6;
+    composition.output += b.output * outR;
+    composition.input += b.input * inR;
+    composition.cacheRead += b.cacheRead * inR * P.cacheReadMultiplier;
+    composition.cacheWrite +=
+      (b.cw5 * P.cacheWrite5mMultiplier + b.cw1 * P.cacheWrite1hMultiplier + b.cwOther * P.cacheWrite5mMultiplier) * inR;
+    addBundle(agg, b);
+  }
+
+  // What-if: price the exact same tokens as if they all ran on one model.
+  const whatIf = {
+    opus: priceBundles({ opus: agg }).cost,
+    sonnet: priceBundles({ sonnet: agg }).cost,
+    haiku: priceBundles({ haiku: agg }).cost,
+  };
+
+  return {
+    cost: priced.cost,
+    cacheHitRate: inputSide > 0 ? tk.cacheRead / inputSide : 0,
+    blendedPerMtok: total > 0 ? (priced.cost / total) * 1e6 : 0,
+    outputShare: total > 0 ? tk.output / total : 0,
+    tokensPerPrompt: userPrompts > 0 ? total / userPrompts : 0,
+    toolsPerPrompt: userPrompts > 0 ? toolUses / userPrompts : 0,
+    composition,
+    whatIf,
+  };
+}
+
 // --- Transcript parsing (cached by file mtime + size) -----------------------
 // Stores raw token counts per day per model family; cost is computed later.
 const sessionCache = new Map();
@@ -468,6 +510,7 @@ function projectDetail(folder, from, to) {
     topTools,
     sessions,
     delta,
+    efficiency: efficiencyStats(grand, userPrompts, toolUses),
   };
 }
 
@@ -641,6 +684,7 @@ function overview(from, to) {
     projects,
     budget,
     delta,
+    efficiency: efficiencyStats(grand, userPrompts, toolUses),
   };
 }
 

@@ -23,6 +23,10 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 - **Period-over-period deltas** — pick a date range and every view compares it to the
   equal-length window just before it: Δ% / Δ$ trend arrows on the headline cards and a
   per-project "vs prev" column in the leaderboard.
+- **Efficiency panel** — quality-of-spend ratios (cache hit rate, blended $/1M tokens,
+  output share, tokens & tools per prompt), a cost-composition bar (output / fresh
+  input / cache read / cache write), and a "what-if" repricing of the same tokens on
+  Sonnet or Haiku.
 - **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when

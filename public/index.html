@@ -93,6 +93,12 @@
   .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
   .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
   .budgetbar .marker { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .8; }
+  .effgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .eff { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .eff .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+  .eff .value { font-size: 20px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .eff .value.good { color: var(--good); }
+  .eff .u { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 3px; }
   .budgetcap { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
   .budgetcap b { font-variant-numeric: tabular-nums; }
   .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--panel-2); }
@@ -375,6 +381,43 @@ function dailyChart(daily) {
   return `<div class="chart">${bars}</div>
     <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
 }
+function efficiencySection(e) {
+  if (!e || e.cost <= 0) return '';
+  const c = e.composition;
+  const ct = c.output + c.input + c.cacheRead + c.cacheWrite;
+  const segs = [
+    ['output', c.output, '#6ea8fe'],
+    ['cache write', c.cacheWrite, '#d97757'],
+    ['fresh input', c.input, '#c6a15b'],
+    ['cache read', c.cacheRead, '#5dd6a0'],
+  ].filter((s) => s[1] > 0);
+  const bar = ct > 0 ? segs.map(([, v, col]) => `<div style="width:${(v / ct * 100).toFixed(2)}%;background:${col}"></div>`).join('') : '';
+  const legend = ct > 0 ? segs.map(([l, v, col]) => `<span class="item"><span class="dot" style="background:${col}"></span>${l} — ${fmtUSD(v)} (${(v / ct * 100).toFixed(0)}%)</span>`).join('') : '';
+  const wi = (fam) => {
+    const cost = e.whatIf[fam];
+    const delta = e.cost > 0 ? (cost - e.cost) / e.cost : 0;
+    const col = delta < -0.005 ? 'var(--good)' : (delta > 0.005 ? 'var(--warn)' : 'var(--muted)');
+    const sign = delta < 0 ? '−' : (delta > 0 ? '+' : '');
+    const label = fam.charAt(0).toUpperCase() + fam.slice(1);
+    return `${label} ≈ <b>${fmtUSD(cost)}</b> <span style="color:${col}">(${sign}${Math.abs(delta * 100).toFixed(0)}%)</span>`;
+  };
+  return `<div class="section">
+    <h3>Efficiency</h3>
+    <div class="effgrid">
+      <div class="eff"><div class="label">Cache hit rate</div><div class="value good">${(e.cacheHitRate * 100).toFixed(1)}%</div></div>
+      <div class="eff"><div class="label">Blended rate</div><div class="value">${fmtUSD(e.blendedPerMtok)}<span class="u">/1M tok</span></div></div>
+      <div class="eff"><div class="label">Output share</div><div class="value">${(e.outputShare * 100).toFixed(1)}%</div></div>
+      <div class="eff"><div class="label">Tokens / prompt</div><div class="value">${fmtTokens(Math.round(e.tokensPerPrompt))}</div></div>
+      <div class="eff"><div class="label">Tools / prompt</div><div class="value">${e.toolsPerPrompt.toFixed(1)}</div></div>
+    </div>
+    <div style="margin-top:18px">
+      <div class="label" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Where the money goes</div>
+      <div class="split">${bar}</div>
+      <div class="legend">${legend}</div>
+    </div>
+    <div class="hint" style="margin-top:18px">Same token usage priced on another model: ${wi('sonnet')} · ${wi('haiku')} <span style="opacity:.7">— what the tokens would cost, not a quality comparison.</span></div>
+  </div>`;
+}
 function budgetSection(b) {
   if (!b) return '';
   const monthLabel = new Date(b.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -520,6 +563,7 @@ function renderOverview(d) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
+    ${efficiencySection(d.efficiency)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
     <div class="section"><h3>Daily spend — all projects</h3>${dailyChart(d.daily)}</div>
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -558,6 +602,7 @@ function renderDetail(d) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
+    ${efficiencySection(d.efficiency)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
     <div class="section"><h3>Daily spend</h3>${dailyChart(d.daily)}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
