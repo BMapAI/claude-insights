@@ -102,6 +102,10 @@
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--text); }
+  th.sorted { color: var(--accent); }
+  .arrow { font-size: 10px; margin-left: 4px; color: var(--accent); }
   .title-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tools { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
@@ -160,6 +164,64 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
 
 let PROJECTS = [];
 let activeId = null;
+
+// --- Sessions table sorting -------------------------------------------------
+const SESS_COLS = [
+  { key: 'title', label: 'Title', num: false },
+  { key: 'userPrompts', label: 'Prompts', num: true },
+  { key: 'toolUses', label: 'Tools', num: true },
+  { key: 'tokens', label: 'Tokens', num: true },
+  { key: 'cost', label: 'Cost', num: true },
+  { key: 'end', label: 'Last active', num: true },
+];
+let sessData = [];
+let sessSort = { key: 'end', dir: 'desc' };
+
+function sessionTokens(s) {
+  return s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite;
+}
+function sessSortVal(s, key) {
+  if (key === 'title') return (s.title || '').toLowerCase();
+  if (key === 'tokens') return sessionTokens(s);
+  if (key === 'end') return s.end || '';
+  return s[key] || 0;
+}
+function renderSessions() {
+  const body = document.getElementById('sess-body');
+  if (!body) return;
+  const { key, dir } = sessSort;
+  const rows = sessData.slice().sort((a, b) => {
+    const va = sessSortVal(a, key), vb = sessSortVal(b, key);
+    let cmp;
+    if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+  body.innerHTML = rows.map((s) => {
+    const tk = sessionTokens(s);
+    return `<tr>
+      <td class="title-cell" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</td>
+      <td class="num">${fmtNum(s.userPrompts)}</td>
+      <td class="num">${fmtNum(s.toolUses)}</td>
+      <td class="num">${fmtTokens(tk)}</td>
+      <td class="num">${fmtUSD(s.cost)}</td>
+      <td class="num">${relTime(s.end)}</td>
+    </tr>`;
+  }).join('');
+  document.querySelectorAll('#sess-head th').forEach((th) => {
+    const active = th.dataset.key === key;
+    th.classList.toggle('sorted', active);
+    th.querySelector('.arrow').textContent = active ? (dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+function onSessHeader(key) {
+  if (sessSort.key === key) {
+    sessSort.dir = sessSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sessSort = { key, dir: key === 'title' ? 'asc' : 'desc' };
+  }
+  renderSessions();
+}
 
 async function init() {
   const res = await fetch('/api/projects');
@@ -337,25 +399,20 @@ function renderDetail(d) {
     <div class="section">
       <h3>Sessions (${d.sessions.length})</h3>
       <table>
-        <thead><tr>
-          <th>Title</th><th class="num">Prompts</th><th class="num">Tools</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Last active</th>
+        <thead><tr id="sess-head">
+          ${SESS_COLS.map((c) => `<th class="sortable${c.num ? ' num' : ''}" data-key="${c.key}">${c.label}<span class="arrow"></span></th>`).join('')}
         </tr></thead>
-        <tbody>
-          ${d.sessions.map((s) => {
-            const tk = s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite;
-            return `<tr>
-              <td class="title-cell" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</td>
-              <td class="num">${fmtNum(s.userPrompts)}</td>
-              <td class="num">${fmtNum(s.toolUses)}</td>
-              <td class="num">${fmtTokens(tk)}</td>
-              <td class="num">${fmtUSD(s.cost)}</td>
-              <td class="num">${relTime(s.end)}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
+        <tbody id="sess-body"></tbody>
       </table>
     </div>
   `;
+
+  sessData = d.sessions;
+  sessSort = { key: 'end', dir: 'desc' };
+  detail.querySelectorAll('#sess-head th').forEach((th) =>
+    th.addEventListener('click', () => onSessHeader(th.dataset.key))
+  );
+  renderSessions();
 }
 
 init().catch((e) => {
