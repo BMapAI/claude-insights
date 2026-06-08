@@ -285,8 +285,20 @@ function listProjects() {
   return projects;
 }
 
-function projectDetail(folder) {
+// Resolve a project id to its directory, refusing anything that escapes
+// PROJECTS_DIR (path traversal) — ids are real folder names, never nested.
+function resolveProjectDir(folder) {
   const projectPath = path.join(PROJECTS_DIR, folder);
+  const rel = path.relative(PROJECTS_DIR, projectPath);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || rel.includes(path.sep)) {
+    return null;
+  }
+  return projectPath;
+}
+
+function projectDetail(folder) {
+  const projectPath = resolveProjectDir(folder);
+  if (!projectPath) return null;
   const files = listSessionFiles(projectPath);
   if (files.length === 0) return null;
 

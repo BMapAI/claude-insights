@@ -75,6 +75,13 @@ USD per 1M tokens. Cache reads bill at ~0.1× the input rate; cache writes at
 | Sonnet | $3 | $15 |
 | Haiku | $1 | $5 |
 
+> **These figures are estimates, not your bill.** Rates are hard-coded (see
+> `PRICING` in `server.js`) from public list prices and may drift as models and
+> pricing change; unknown model names fall back to Opus rates. Numbers exclude
+> any negotiated discounts, batch pricing, or subscription plans. Use it for
+> relative comparison and trend-spotting, not invoice reconciliation. Edit the
+> `PRICING` table to match your actual rates.
+
 ## How it works
 
 - `server.js` — scans `~/.claude/projects/*`, parses each `.jsonl` session transcript,
