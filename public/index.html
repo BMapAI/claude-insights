@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude Insights — ROI</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d212b;
+    --border: #272c38;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #d97757;       /* terracotta */
+    --accent-2: #6ea8fe;
+    --good: #5dd6a0;
+    --opus: #d97757;
+    --sonnet: #6ea8fe;
+    --haiku: #c6a15b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+  }
+  a { color: var(--accent-2); }
+
+  /* Sidebar */
+  #sidebar {
+    width: 320px;
+    min-width: 320px;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  .brand {
+    padding: 18px 18px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .brand .sub { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-all; }
+  .proj-list { padding: 8px; }
+  .proj {
+    padding: 11px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    margin-bottom: 4px;
+  }
+  .proj:hover { background: var(--panel-2); }
+  .proj.active { background: var(--panel-2); border-color: var(--accent); }
+  .proj.all { border-color: var(--border); background: var(--panel-2); margin-bottom: 10px; }
+  .proj.all.active { border-color: var(--accent); }
+  .proj .name { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .proj .name .cost { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .proj .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; justify-content: space-between; }
+
+  /* Main */
+  #main { flex: 1; height: 100vh; overflow-y: auto; padding: 26px 32px; }
+  .empty { color: var(--muted); display: grid; place-items: center; height: 60vh; text-align: center; }
+  .header h2 { margin: 0 0 4px; font-size: 22px; }
+  .header .path { color: var(--muted); font-size: 13px; word-break: break-all; }
+  .header .path .branch {
+    color: var(--good); border: 1px solid var(--border); border-radius: 6px;
+    padding: 1px 7px; margin-left: 8px; font-size: 11px;
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin: 22px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .value.cost { color: var(--accent); }
+  .card .value.good { color: var(--good); }
+  .card .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+  .section h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+
+  /* Model split bar */
+  .split { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--panel-2); }
+  .split > div { height: 100%; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* Daily chart */
+  .chart { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding-top: 8px; }
+  .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 3px; }
+  .bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; transition: opacity .15s; }
+  .bar:hover { opacity: .7; }
+  .chart-x { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 6px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .title-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
+  .chip b { color: var(--accent); margin-left: 5px; }
+  .loading { color: var(--muted); }
+  .row-link { cursor: pointer; }
+  .row-link:hover { background: var(--panel-2); }
+  .share { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; vertical-align: middle; }
+  .share-fill { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">
+      <h1>⬡ Claude Insights</h1>
+      <div class="sub" id="proj-dir">loading…</div>
+    </div>
+    <div class="proj-list" id="proj-list"><div class="loading" style="padding:12px">Scanning projects…</div></div>
+  </aside>
+  <main id="main">
+    <div class="empty" id="empty">
+      <div>
+        <div style="font-size:42px">⬡</div>
+        <p>Select a project on the left to see its cost &amp; activity overview.</p>
+      </div>
+    </div>
+    <div id="detail" style="display:none"></div>
+  </main>
+
+<script>
+const MODEL_COLORS = { opus: '#d97757', sonnet: '#6ea8fe', haiku: '#c6a15b' };
+const fmtUSD = (n) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtNum = (n) => (n || 0).toLocaleString('en-US');
+function fmtTokens(n) {
+  n = n || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function relTime(ts) {
+  if (!ts) return '—';
+  const diff = Date.now() - new Date(ts).getTime();
+  const day = 86400000;
+  if (diff < 3600000) return Math.max(1, Math.round(diff / 60000)) + 'm ago';
+  if (diff < day) return Math.round(diff / 3600000) + 'h ago';
+  if (diff < 30 * day) return Math.round(diff / day) + 'd ago';
+  return fmtDate(ts);
+}
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+let PROJECTS = [];
+let activeId = null;
+
+async function init() {
+  const res = await fetch('/api/projects');
+  const data = await res.json();
+  PROJECTS = data.projects;
+  document.getElementById('proj-dir').textContent = data.projectsDir;
+  renderProjectList();
+  if (PROJECTS.length) selectProject('__all__'); // default to the rollup
+}
+
+function renderProjectList() {
+  const el = document.getElementById('proj-list');
+  if (!PROJECTS.length) {
+    el.innerHTML = '<div class="loading" style="padding:12px">No projects found.</div>';
+    return;
+  }
+  const grandTotal = PROJECTS.reduce((s, p) => s + p.cost, 0);
+  const allRow = `
+    <div class="proj all ${activeId === '__all__' ? 'active' : ''}" data-id="__all__">
+      <div class="name"><span class="title-cell">▦ All projects</span><span class="cost">${fmtUSD(grandTotal)}</span></div>
+      <div class="meta"><span>${PROJECTS.length} projects · combined</span><span></span></div>
+    </div>`;
+  el.innerHTML = allRow + PROJECTS.map((p) => `
+    <div class="proj ${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}">
+      <div class="name"><span class="title-cell">${esc(p.name)}</span><span class="cost">${fmtUSD(p.cost)}</span></div>
+      <div class="meta"><span>${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts</span><span>${relTime(p.lastActive)}</span></div>
+    </div>`).join('');
+  el.querySelectorAll('.proj').forEach((node) =>
+    node.addEventListener('click', () => selectProject(node.dataset.id))
+  );
+}
+
+async function selectProject(id) {
+  activeId = id;
+  renderProjectList();
+  document.getElementById('empty').style.display = 'none';
+  const detail = document.getElementById('detail');
+  detail.style.display = 'block';
+  detail.innerHTML = '<div class="loading">Loading overview…</div>';
+  if (id === '__all__') {
+    const res = await fetch('/api/overview');
+    if (!res.ok) { detail.innerHTML = '<div class="loading">Failed to load overview.</div>'; return; }
+    renderOverview(await res.json());
+    return;
+  }
+  const res = await fetch('/api/project/' + encodeURIComponent(id));
+  if (!res.ok) { detail.innerHTML = '<div class="loading">Failed to load project.</div>'; return; }
+  renderDetail(await res.json());
+}
+
+function renderOverview(d) {
+  const t = d.totals;
+  const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
+  const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
+  const detail = document.getElementById('detail');
+  detail.innerHTML = `
+    <div class="header">
+      <h2>All projects</h2>
+      <div class="path">${fmtNum(d.projectCount)} projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">across all projects</div></div>
+      <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
+      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
+      <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
+      <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div><div class="hint">${fmtNum(t.assistantMessages)} assistant msgs</div></div>
+      <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
+      <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
+      <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
+    </div>
+
+    <div class="section">
+      <h3>Spend by model</h3>
+      ${modelSplit(t.costByFamily, t.cost)}
+    </div>
+
+    <div class="section">
+      <h3>Daily spend — all projects</h3>
+      ${dailyChart(d.daily)}
+    </div>
+
+    <div class="section">
+      <h3>Top tools — all projects</h3>
+      <div class="tools">
+        ${d.topTools.length ? d.topTools.slice(0, 24).map((tl) => `<span class="chip">${esc(tl.name)}<b>${fmtNum(tl.count)}</b></span>`).join('') : '<span class="loading">No tool calls recorded.</span>'}
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Projects by spend (${d.projects.length})</h3>
+      <table>
+        <thead><tr>
+          <th>Project</th><th class="num">Cost</th><th class="num">Share</th><th class="num">Sessions</th><th class="num">Prompts</th><th class="num">Cache saved</th><th class="num">Last active</th>
+        </tr></thead>
+        <tbody>
+          ${d.projects.map((p) => `
+            <tr class="row-link" data-id="${esc(p.id)}">
+              <td class="title-cell" title="${esc(p.cwd)}">${esc(p.name)}</td>
+              <td class="num">${fmtUSD(p.cost)}</td>
+              <td class="num"><span class="share"><span class="share-fill" style="width:${(p.cost / maxCost * 100).toFixed(1)}%"></span></span></td>
+              <td class="num">${fmtNum(p.sessions)}</td>
+              <td class="num">${fmtNum(p.userPrompts)}</td>
+              <td class="num good">${fmtUSD(p.cacheSavings)}</td>
+              <td class="num">${relTime(p.lastActive)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  detail.querySelectorAll('.row-link').forEach((node) =>
+    node.addEventListener('click', () => selectProject(node.dataset.id))
+  );
+}
+
+function modelSplit(costByFamily, total) {
+  const fams = Object.entries(costByFamily).sort((a, b) => b[1] - a[1]);
+  if (!fams.length || total <= 0) return '<div class="split"></div>';
+  const bar = fams.map(([f, c]) =>
+    `<div style="width:${(c / total * 100).toFixed(2)}%;background:${MODEL_COLORS[f] || '#888'}"></div>`).join('');
+  const legend = fams.map(([f, c]) =>
+    `<span class="item"><span class="dot" style="background:${MODEL_COLORS[f] || '#888'}"></span>${esc(f)} — ${fmtUSD(c)} (${(c / total * 100).toFixed(0)}%)</span>`).join('');
+  return `<div class="split">${bar}</div><div class="legend">${legend}</div>`;
+}
+
+function dailyChart(daily) {
+  if (!daily.length) return '<div class="loading">No dated activity.</div>';
+  const max = Math.max(...daily.map((d) => d.cost), 0.0001);
+  const bars = daily.map((d) =>
+    `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs">
+       <div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>
+     </div>`).join('');
+  return `<div class="chart">${bars}</div>
+    <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
+}
+
+function renderDetail(d) {
+  const t = d.totals;
+  const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
+  const detail = document.getElementById('detail');
+  detail.innerHTML = `
+    <div class="header">
+      <h2>${esc(d.name)}</h2>
+      <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(t.start)} → ${fmtDate(t.end)}</div></div>
+      <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">${fmtNum(t.sessionsWithActivity)} with activity</div></div>
+      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
+      <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
+      <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div><div class="hint">${fmtNum(t.assistantMessages)} assistant msgs</div></div>
+      <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
+      <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
+      <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
+    </div>
+
+    <div class="section">
+      <h3>Spend by model</h3>
+      ${modelSplit(t.costByFamily, t.cost)}
+    </div>
+
+    <div class="section">
+      <h3>Daily spend</h3>
+      ${dailyChart(d.daily)}
+    </div>
+
+    <div class="section">
+      <h3>Top tools</h3>
+      <div class="tools">
+        ${d.topTools.length ? d.topTools.slice(0, 24).map((tl) => `<span class="chip">${esc(tl.name)}<b>${fmtNum(tl.count)}</b></span>`).join('') : '<span class="loading">No tool calls recorded.</span>'}
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Sessions (${d.sessions.length})</h3>
+      <table>
+        <thead><tr>
+          <th>Title</th><th class="num">Prompts</th><th class="num">Tools</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Last active</th>
+        </tr></thead>
+        <tbody>
+          ${d.sessions.map((s) => {
+            const tk = s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite;
+            return `<tr>
+              <td class="title-cell" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</td>
+              <td class="num">${fmtNum(s.userPrompts)}</td>
+              <td class="num">${fmtNum(s.toolUses)}</td>
+              <td class="num">${fmtTokens(tk)}</td>
+              <td class="num">${fmtUSD(s.cost)}</td>
+              <td class="num">${relTime(s.end)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+init().catch((e) => {
+  document.getElementById('proj-list').innerHTML = '<div class="loading" style="padding:12px">Error: ' + esc(e.message) + '</div>';
+});
+</script>
+</body>
+</html>
