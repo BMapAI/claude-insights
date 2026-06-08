@@ -301,8 +301,8 @@ function onSessHeader(key) {
 const LEAD_COLS = [
   { key: 'name', label: 'Project', num: false },
   { key: 'cost', label: 'Cost', num: true },
-  { key: null, label: 'Share', num: true },
-  { key: null, label: 'vs prev', num: true, trend: true },
+  { key: 'share', label: 'Share', num: true },
+  { key: 'costPct', label: 'vs prev', num: true, trend: true },
   { key: 'sessions', label: 'Sessions', num: true },
   { key: 'userPrompts', label: 'Prompts', num: true },
   { key: 'cacheSavings', label: 'Cache saved', num: true },
@@ -315,7 +315,8 @@ let leadSort = { key: 'cost', dir: 'desc' };
 function leadSortVal(p, key) {
   if (key === 'name') return (p.name || '').toLowerCase();
   if (key === 'lastActive') return p.lastActive || '';
-  return p[key] || 0;
+  if (key === 'share') return p.cost; // Share is a visual of cost → sort by cost
+  return p[key] || 0; // includes costPct (null/"new" treated as 0)
 }
 function renderLeaderboard() {
   const body = document.getElementById('lead-body');
