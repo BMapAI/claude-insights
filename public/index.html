@@ -302,6 +302,7 @@ const LEAD_COLS = [
   { key: 'name', label: 'Project', num: false },
   { key: 'cost', label: 'Cost', num: true },
   { key: null, label: 'Share', num: true },
+  { key: null, label: 'vs prev', num: true, trend: true },
   { key: 'sessions', label: 'Sessions', num: true },
   { key: 'userPrompts', label: 'Prompts', num: true },
   { key: 'cacheSavings', label: 'Cache saved', num: true },
@@ -309,6 +310,7 @@ const LEAD_COLS = [
 ];
 let leadData = [];
 let leadMax = 1;
+let leadHasPrev = false;
 let leadSort = { key: 'cost', dir: 'desc' };
 function leadSortVal(p, key) {
   if (key === 'name') return (p.name || '').toLowerCase();
@@ -331,6 +333,7 @@ function renderLeaderboard() {
       <td class="title-cell" title="${esc(p.cwd)}">${esc(p.name)}</td>
       <td class="num">${fmtUSD(p.cost)}</td>
       <td class="num"><span class="share"><span class="share-fill" style="width:${(p.cost / leadMax * 100).toFixed(1)}%"></span></span></td>
+      ${leadHasPrev ? `<td class="num">${trendCell(p)}</td>` : ''}
       <td class="num">${fmtNum(p.sessions)}</td>
       <td class="num">${fmtNum(p.userPrompts)}</td>
       <td class="num good">${fmtUSD(p.cacheSavings)}</td>
@@ -404,6 +407,26 @@ function budgetSection(b) {
     </div>
     ${over ? `<div class="hint" style="margin-top:10px;color:var(--warn)">⚠ On pace to exceed budget by ${fmtUSD(b.projectedCost - b.monthly)} — ${pace}.</div>` : `<div class="hint" style="margin-top:10px">On track — ${pace}.</div>`}
   </div>`;
+}
+function deltaChip(change, pct, mode) {
+  if (change == null) return '';
+  const eps = 0.005;
+  const dir = change > eps ? 'up' : (change < -eps ? 'down' : 'flat');
+  const arrow = dir === 'up' ? '▲' : (dir === 'down' ? '▼' : '▬');
+  let color = 'var(--muted)';
+  if (mode === 'cost') color = dir === 'up' ? 'var(--warn)' : (dir === 'down' ? 'var(--good)' : 'var(--muted)');
+  if (pct == null) return `<span style="color:var(--muted)">new</span>`;
+  const pctStr = (pct >= 0 ? '+' : '') + (pct * 100).toFixed(0) + '%';
+  return `<span style="color:${color}">${arrow} ${pctStr}</span>`;
+}
+function trendCell(p) {
+  if (p.costPrev == null) return '—';
+  return deltaChip(p.cost - p.costPrev, p.costPct, 'cost');
+}
+function deltaHint(delta, kind, fallback) {
+  if (!delta) return fallback;
+  if (kind === 'cost') return `${deltaChip(delta.costChange, delta.costPct, 'cost')} vs prev ${delta.days}d`;
+  return `${deltaChip(delta.promptsChange, delta.promptsPct, 'neutral')} vs prev ${delta.days}d`;
 }
 function toolChips(topTools) {
   return topTools.length
@@ -487,9 +510,9 @@ function renderOverview(d) {
     </div>
     ${budgetSection(d.budget)}
     <div class="cards">
-      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">in selected range</div></div>
+      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', 'in selected range')}</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
-      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
+      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
       <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div><div class="hint">${fmtNum(t.assistantMessages)} assistant msgs</div></div>
       <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
@@ -503,13 +526,14 @@ function renderOverview(d) {
       <h3>Projects by spend (${d.projects.length})</h3>
       <table>
         <thead><tr id="lead-head">
-          ${LEAD_COLS.map((c) => { const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}"${s ? ` data-key="${c.key}"` : ''}>${c.label}${s ? '<span class="arrow"></span>' : ''}</th>`; }).join('')}
+          ${LEAD_COLS.map((c) => { if (c.trend && !d.delta) return ''; const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}"${s ? ` data-key="${c.key}"` : ''}>${c.label}${s ? '<span class="arrow"></span>' : ''}</th>`; }).join('')}
         </tr></thead>
         <tbody id="lead-body"></tbody>
       </table>
     </div>`;
   leadData = d.projects;
   leadMax = maxCost;
+  leadHasPrev = !!d.delta;
   leadSort = { key: 'cost', dir: 'desc' };
   document.querySelectorAll('#lead-head th').forEach((th) => th.addEventListener('click', () => onLeadHeader(th.dataset.key)));
   renderLeaderboard();
@@ -524,9 +548,9 @@ function renderDetail(d) {
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
     <div class="cards">
-      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(t.start)} → ${fmtDate(t.end)}</div></div>
+      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', `${fmtDate(t.start)} → ${fmtDate(t.end)}`)}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
-      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>
+      <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
       <div class="card"><div class="label">Tool calls</div><div class="value">${fmtNum(t.toolUses)}</div><div class="hint">${fmtNum(t.assistantMessages)} assistant msgs</div></div>
       <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>

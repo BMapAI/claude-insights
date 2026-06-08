@@ -95,6 +95,38 @@ function currentMonthInfo() {
   };
 }
 
+// Shift a YYYY-MM-DD string by N days (UTC, avoids DST/TZ drift).
+function shiftDay(dayStr, deltaDays) {
+  const d = new Date(dayStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+
+// The equal-length period immediately before [from, to]. Null for an unbounded range.
+function previousPeriod(from, to) {
+  if (!from || !to) return null;
+  const len = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1;
+  if (!isFinite(len) || len <= 0) return null;
+  const prevTo = shiftDay(from, -1);
+  const prevFrom = shiftDay(prevTo, -(len - 1));
+  return { from: prevFrom, to: prevTo, len };
+}
+
+// Build a delta object comparing current vs previous totals.
+function makeDelta(prev, curCost, prevCost, curPrompts, prevPrompts) {
+  return {
+    prevFrom: prev.from,
+    prevTo: prev.to,
+    days: prev.len,
+    prevCost,
+    costChange: curCost - prevCost,
+    costPct: prevCost > 0 ? (curCost - prevCost) / prevCost : null,
+    prevPrompts,
+    promptsChange: curPrompts - prevPrompts,
+    promptsPct: prevPrompts > 0 ? (curPrompts - prevPrompts) / prevPrompts : null,
+  };
+}
+
 function modelFamily(model) {
   const m = (model || '').toLowerCase();
   if (m.includes('opus')) return 'opus';
@@ -326,6 +358,9 @@ function projectDetail(folder, from, to) {
   const grand = {}; // family -> bundle
   const tools = {};
   const dayMap = {}; // date -> { byFamily, messages, userPrompts }
+  const prev = previousPeriod(from, to);
+  const prevGrand = {};
+  let prevPrompts = 0;
   let cwd = null;
   let gitBranch = null;
   let userPrompts = 0;
@@ -341,6 +376,17 @@ function projectDetail(folder, from, to) {
     if (!s) continue;
     if (s.cwd && !cwd) cwd = s.cwd;
     if (s.gitBranch && !gitBranch) gitBranch = s.gitBranch;
+
+    if (prev) {
+      const pa = aggregateSession(s, prev.from, prev.to);
+      if (pa.has) {
+        prevPrompts += pa.userPrompts;
+        for (const [fam, b] of Object.entries(pa.byFamily)) {
+          if (!prevGrand[fam]) prevGrand[fam] = emptyBundle();
+          addBundle(prevGrand[fam], b);
+        }
+      }
+    }
 
     const agg = aggregateSession(s, from, to);
     if (!agg.has) continue;
@@ -385,6 +431,7 @@ function projectDetail(folder, from, to) {
   }
 
   const totals = priceBundles(grand);
+  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(prevGrand).cost, userPrompts, prevPrompts) : null;
   sessions.sort((a, b) => (b.end || '').localeCompare(a.end || ''));
 
   const daily = Object.entries(dayMap)
@@ -420,6 +467,7 @@ function projectDetail(folder, from, to) {
     daily,
     topTools,
     sessions,
+    delta,
   };
 }
 
@@ -437,6 +485,9 @@ function overview(from, to) {
   const dayMap = {};
   const monthGrand = {}; // month-to-date tokens, independent of the selected range
   const M = currentMonthInfo();
+  const prev = previousPeriod(from, to); // equal-length window before [from,to]
+  const prevGrand = {};
+  let prevPrompts = 0;
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
@@ -453,6 +504,7 @@ function overview(from, to) {
     if (files.length === 0) continue;
 
     const pGrand = {};
+    const pPrevGrand = {};
     let pSessions = 0;
     let pPrompts = 0;
     let cwd = null;
@@ -471,6 +523,20 @@ function overview(from, to) {
           for (const [fam, b] of Object.entries(d.byFamily)) {
             if (!monthGrand[fam]) monthGrand[fam] = emptyBundle();
             addBundle(monthGrand[fam], b);
+          }
+        }
+      }
+
+      // Previous-period aggregation (for deltas), independent of current range.
+      if (prev) {
+        const pa = aggregateSession(s, prev.from, prev.to);
+        if (pa.has) {
+          prevPrompts += pa.userPrompts;
+          for (const [fam, b] of Object.entries(pa.byFamily)) {
+            if (!prevGrand[fam]) prevGrand[fam] = emptyBundle();
+            addBundle(prevGrand[fam], b);
+            if (!pPrevGrand[fam]) pPrevGrand[fam] = emptyBundle();
+            addBundle(pPrevGrand[fam], b);
           }
         }
       }
@@ -508,6 +574,7 @@ function overview(from, to) {
 
     if (active) projectCount += 1;
     const priced = priceBundles(pGrand);
+    const prevCost = prev ? priceBundles(pPrevGrand).cost : null;
     projects.push({
       id: e.name,
       name: projectName(e.name, cwd),
@@ -517,11 +584,15 @@ function overview(from, to) {
       cost: priced.cost,
       cacheSavings: priced.cacheSavings,
       lastActive,
+      costPrev: prevCost,
+      costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
     });
   }
 
   const totals = priceBundles(grand);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
+
+  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(prevGrand).cost, userPrompts, prevPrompts) : null;
 
   const monthPriced = priceBundles(monthGrand);
   const monthly = getMonthlyBudget();
@@ -569,6 +640,7 @@ function overview(from, to) {
     topTools,
     projects,
     budget,
+    delta,
   };
 }
 
