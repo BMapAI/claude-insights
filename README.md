@@ -1,4 +1,4 @@
-# Claude Insights
+# Claude Ledger
 
 A zero-dependency cost / ROI analyzer for [Claude Code](https://claude.com/claude-code) projects.
 
@@ -48,12 +48,12 @@ single instance can't read a teammate's data.
 
 Recommended setup on a shared box:
 
-1. **Check out the code once** anywhere readable (e.g. `/var/www/claude-insights`)
+1. **Check out the code once** anywhere readable (e.g. `/var/www/claude-ledger`)
    — the app writes nothing to its own folder, so it can be shared read-only and
    updated with a single `git pull`.
 2. **Each teammate runs their own instance** — it reads *their* `~/.claude`:
    ```bash
-   node /var/www/claude-insights/server.js
+   node /var/www/claude-ledger/server.js
    ```
    It binds to localhost and auto-picks a free port, so simultaneous users don't
    collide and nobody's prompts/costs are exposed to the rest of the machine.

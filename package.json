@@ -1,10 +1,10 @@
 {
-  "name": "claude-insights",
+  "name": "claude-ledger",
   "version": "1.0.0",
   "description": "ROI / cost analyzer for Claude Code projects under ~/.claude/projects",
   "main": "server.js",
   "bin": {
-    "claude-insights": "server.js"
+    "claude-ledger": "server.js"
   },
   "scripts": {
     "start": "node server.js"
@@ -22,7 +22,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hpivanov/claude-insights.git"
+    "url": "git+https://github.com/BMapAI/claude-ledger.git"
   },
   "engines": {
     "node": ">=18"

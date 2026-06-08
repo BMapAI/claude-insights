@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * Claude Insights — ROI / cost analyzer for Claude Code projects.
+ * Claude Ledger — ROI / cost analyzer for Claude Code projects.
  *
  * Reads the session transcripts under ~/.claude/projects, keeps per-day /
  * per-model token counts, and prices them at query time (so date filtering and
@@ -790,7 +790,7 @@ function listen(port, triesLeft) {
   });
   server.listen(port, HOST, () => {
     const shown = HOST === '0.0.0.0' ? 'localhost' : HOST;
-    console.log(`Claude Insights → http://${shown}:${port}`);
+    console.log(`Claude Ledger → http://${shown}:${port}`);
     console.log(`Reading projects from: ${PROJECTS_DIR}`);
     if (HOST === '127.0.0.1') {
       console.log(
