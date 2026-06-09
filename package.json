@@ -6,6 +6,12 @@
   "bin": {
     "claude-ledger": "server.js"
   },
+  "files": [
+    "server.js",
+    "public/",
+    "pricing.json",
+    "config.json"
+  ],
   "scripts": {
     "start": "node server.js",
     "test": "node --test"

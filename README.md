@@ -6,6 +6,13 @@ It reads the session transcripts under `~/.claude/projects`, attributes token us
 to per-model pricing, and serves a small web dashboard where you can pick a project
 (or view all at once) and see what it actually cost.
 
+Plenty of tools count Claude Code tokens. Ledger is about the **return** as much as
+the spend — alongside cost by project / session / model / date, it shows **what the
+work produced** (a Markdown-exportable log of commits, PRs, and files), **surfaces
+what stands out** in a range (spikes, friction, trends), **survives transcript
+cleanup** (opt-in durable history), and exposes a Prometheus **`/metrics`** endpoint.
+Local, read-only, and dependency-free.
+
 ![Claude Ledger — all-projects overview](docs/overview.png)
 
 <sub>Screenshot uses synthetic demo data.</sub>
@@ -96,9 +103,11 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 ## Run
 
 ```bash
-node server.js
+npx claude-ledger
 # → http://127.0.0.1:4317
 ```
+
+No install needed — `npx` runs it directly. From a clone, use `node server.js` instead.
 
 Configuration via environment variables:
 
