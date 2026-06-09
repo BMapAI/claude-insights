@@ -1498,6 +1498,7 @@ module.exports = {
   pricePunchcard,
   inRange,
   aggregateSession,
+  parseSession,
   toCSV,
   csvCell,
 };
