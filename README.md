@@ -135,6 +135,26 @@ breakdown, falling back to 5m).
 > plans. Use it for relative comparison and trend-spotting, not invoice
 > reconciliation — and edit `pricing.json` to match your actual rates.
 
+## Data history & retention
+
+Ledger can only show what's still on disk. Claude Code **deletes local session
+transcripts after 30 days by default** (the `cleanupPeriodDays` setting), so by
+default the dashboard's history is effectively capped at the last ~30 days —
+anything older has already been cleaned up before Ledger can read it. This affects
+the **All time** / **90d** filters and the **period-over-period deltas**, which
+silently have no data beyond the retention window.
+
+To keep a longer history, raise `cleanupPeriodDays` in your Claude Code settings
+(`~/.claude/settings.json` for all projects, or `.claude/settings.json` per project)
+**before** older sessions age out:
+
+```json
+{ "cleanupPeriodDays": 365 }
+```
+
+Note this grows `~/.claude/projects` unbounded — it keeps every transcript for the
+configured number of days.
+
 ## How it works
 
 - `server.js` — scans `~/.claude/projects/*`, parses each `.jsonl` session transcript,
