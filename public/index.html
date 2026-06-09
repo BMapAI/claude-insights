@@ -507,6 +507,26 @@ function modelVersions(models) {
     `<span class="item"><span class="dot" style="background:${MODEL_COLORS[fam(m.name)] || '#888'}"></span>${esc(m.name)} — ${fmtUSD(m.cost)} (${(m.cost / total * 100).toFixed(0)}%)</span>`).join('');
   return `<div class="legend" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">${rows}</div>`;
 }
+// Interactive (CLI) vs automated (SDK) spend. Only shown when >1 entrypoint is
+// present — a single entrypoint carries no comparison signal.
+const ENTRY_META = {
+  'cli': { label: 'Interactive (CLI)', color: '#6ea8fe' },
+  'sdk-cli': { label: 'Automated (SDK)', color: '#c6a15b' },
+  'unknown': { label: 'Unknown', color: '#8b93a7' },
+};
+function entrypointSection(items) {
+  if (!items || items.length < 2) return '';
+  const total = items.reduce((s, i) => s + i.cost, 0);
+  if (total <= 0) return '';
+  const meta = (k) => ENTRY_META[k] || { label: k, color: '#8b93a7' };
+  const bar = items.map((i) => `<div style="width:${(i.cost / total * 100).toFixed(2)}%;background:${meta(i.name).color}"></div>`).join('');
+  const legend = items.map((i) =>
+    `<span class="item"><span class="dot" style="background:${meta(i.name).color}"></span>${esc(meta(i.name).label)} — ${fmtUSD(i.cost)} (${(i.cost / total * 100).toFixed(0)}%)</span>`).join('');
+  return `<div class="section"><h3>Interactive vs automated</h3>
+    <div class="split">${bar}</div><div class="legend">${legend}</div>
+    <div class="hint" style="margin-top:10px">Spend by Claude Code entrypoint — <code>cli</code> is hands-on interactive work, <code>sdk-cli</code> is headless / SDK-driven automation.</div>
+  </div>`;
+}
 // Tool reliability: error rate, recovery spend, and a per-tool error breakdown.
 function reliabilitySection(r, totalCost) {
   if (!r || !r.totalCalls) return '';
@@ -747,6 +767,7 @@ function renderOverview(d, opts) {
     ${efficiencySection(d.efficiency)}
     ${reliabilitySection(d.reliability, t.cost)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
+    ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -792,6 +813,7 @@ function renderDetail(d, opts) {
     ${efficiencySection(d.efficiency)}
     ${reliabilitySection(d.reliability, t.cost)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
+    ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -838,6 +860,7 @@ function renderSession(d) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">${fmtTokens(t.tokens.cacheRead)} read</div></div>
     </div>
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
+    ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}

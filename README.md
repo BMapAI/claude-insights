@@ -51,6 +51,10 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 - **Exact model mix** — beyond the model-family split, the precise model versions
   (e.g. `claude-opus-4-8` vs `claude-opus-4-7`) and their share of spend, so a silent
   model rollover shows up in the numbers.
+- **Interactive vs automated** — splits spend by Claude Code entrypoint (`cli` =
+  hands-on interactive work vs `sdk-cli` = headless / SDK-driven automation), so you
+  can see how much cost comes from automation rather than you at the keyboard. Shown
+  when more than one entrypoint is present.
 - **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
@@ -178,10 +182,11 @@ configured number of days.
   so date filtering and `pricing.json` edits both take effect without re-parsing).
   Parsed sessions are cached by file mtime + size, so only the first scan is slow.
   `/api/overview` and `/api/project/:id` also return a `punchcard` (a priced 7×24
-  weekday×hour grid), per-model daily costs, exact-model spend (`topModels`), and a
-  `reliability` summary (tool error rates + recovery spend). Endpoints:
-  `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
-  (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
+  weekday×hour grid), per-model daily costs, exact-model spend (`topModels`),
+  per-entrypoint spend (`topEntrypoints`), and a `reliability` summary (tool error
+  rates + recovery spend). Endpoints: `/api/projects`, `/api/overview`,
+  `/api/project/:id`, `/api/session/:project/:id` (all accept
+  `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
 
 ## License

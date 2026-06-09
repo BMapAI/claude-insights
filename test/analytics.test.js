@@ -118,3 +118,40 @@ test('reliabilityStats is all-zero / empty for clean input', () => {
   assert.equal(r.wastedCost, 0);
   assert.deepEqual(r.byTool, []);
 });
+
+test('aggregateSession rolls up byEntry / byModel / toolErrors / errorFollowup across days', () => {
+  const bundle = (o) => ({ ...L.emptyBundle(), ...o });
+  const session = {
+    days: {
+      '2026-01-01': {
+        userPrompts: 1, assistantMessages: 2, toolUses: 2,
+        tools: { Bash: 2 },
+        byFamily: { opus: bundle({ input: 100 }) },
+        byModel: { 'claude-opus-4-8': { opus: bundle({ input: 100 }) } },
+        byEntry: { cli: { opus: bundle({ input: 100 }) } },
+        toolErrors: { Bash: 1 },
+        errorFollowup: { opus: bundle({ output: 10 }) },
+      },
+      '2026-01-02': {
+        userPrompts: 0, assistantMessages: 1, toolUses: 0,
+        tools: {},
+        byFamily: { opus: bundle({ input: 50 }) },
+        byModel: { 'claude-opus-4-8': { opus: bundle({ input: 50 }) } },
+        byEntry: { 'sdk-cli': { opus: bundle({ input: 50 }) } },
+        toolErrors: {},
+        errorFollowup: {},
+      },
+    },
+  };
+  const a = L.aggregateSession(session, null, null);
+  assert.equal(a.byEntry.cli.opus.input, 100);
+  assert.equal(a.byEntry['sdk-cli'].opus.input, 50);
+  assert.equal(a.byModel['claude-opus-4-8'].opus.input, 150);
+  assert.equal(a.toolErrors.Bash, 1);
+  assert.equal(a.errorFollowup.opus.output, 10);
+
+  // Date filtering still applies to the new maps.
+  const day1 = L.aggregateSession(session, '2026-01-01', '2026-01-01');
+  assert.equal(day1.byEntry.cli.opus.input, 100);
+  assert.equal(day1.byEntry['sdk-cli'], undefined);
+});
