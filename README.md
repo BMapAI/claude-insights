@@ -10,6 +10,10 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 
 <sub>Screenshot uses synthetic demo data.</sub>
 
+![Session drill-down — cost-per-turn, tools, latency, and prompts](docs/session.png)
+
+<sub>A single session, deep-linked via <code>?project=…&session=…</code>.</sub>
+
 ## Features
 
 - **"Worth a look" signals** — a ranked panel at the top of each view that surfaces
@@ -26,6 +30,8 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   leaderboard (click a row to drill in).
 - **Session drill-down** — click any session to see its prompts, cost-per-turn
   timeline, tool usage, duration, and totals.
+- **Shareable URLs** — the selected project, session, and date range live in the
+  address bar, so any view is bookmarkable, linkable, and back/forward-navigable.
 - **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
   across every view.
 - **Live monitoring** — a **Live** toggle auto-refreshes the current view every 20s
@@ -240,6 +246,22 @@ CLAUDE_LEDGER_DATA=/path/to/rollups.json node server.js    # or choose the path
   there's no drill-down to open).
 - The store lives outside `~/.claude`, so Claude Code's cleanup never touches it.
   Delete the file to start over; it's rebuilt from whatever transcripts remain.
+
+## Metrics endpoint (Prometheus)
+
+`GET /metrics` exposes all-time, all-projects gauges in Prometheus text format, so
+you can scrape Ledger and graph spend/usage over time in Grafana — independent of
+the transcript window:
+
+```
+claude_ledger_spend_usd 5588.43
+claude_ledger_tokens 7002664958
+claude_ledger_sessions 305
+claude_ledger_project_spend_usd{project="maestro"} 3804.63
+```
+
+…plus prompts, tool calls, cache savings, tool error rate, recovery spend,
+commits, and files edited. Read-only like the rest of the app.
 
 ## How it works
 

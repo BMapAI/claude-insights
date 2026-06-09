@@ -1594,6 +1594,35 @@ function sendFile(res, file) {
   });
 }
 
+// --- Prometheus metrics -----------------------------------------------------
+// Exposition for GET /metrics so Ledger can be a scrape target — graph spend and
+// usage in Grafana over time, independent of the transcript window. All-time,
+// all-projects gauges.
+function promMetrics(ov) {
+  if (!ov) return '';
+  const t = ov.totals;
+  const lines = [];
+  const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const m = (name, help, samples) => {
+    lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} gauge`, ...samples.map(([lbl, v]) => `${name}${lbl} ${v}`));
+  };
+  const usd = (x) => (x || 0).toFixed(4);
+  const tokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
+  m('claude_ledger_spend_usd', 'Estimated spend in USD (all time, list prices).', [['', usd(t.cost)]]);
+  m('claude_ledger_tokens', 'Total tokens (all time).', [['', tokens]]);
+  m('claude_ledger_sessions', 'Sessions (all time).', [['', t.sessions]]);
+  m('claude_ledger_prompts', 'User prompts (all time).', [['', t.userPrompts]]);
+  m('claude_ledger_tool_calls', 'Tool calls (all time).', [['', t.toolUses]]);
+  m('claude_ledger_cache_savings_usd', 'Cache savings vs uncached reads (USD).', [['', usd(ov.cacheSavings)]]);
+  m('claude_ledger_tool_error_rate', 'Tool error rate, 0-1 (all time).', [['', (ov.reliability.errorRate || 0).toFixed(6)]]);
+  m('claude_ledger_recovery_spend_usd', 'Spend recovering from failed tools (USD).', [['', usd(ov.reliability.wastedCost)]]);
+  m('claude_ledger_commits', 'Git commits observed (all time).', [['', ov.output.commits]]);
+  m('claude_ledger_files_edited', 'Distinct files edited (all time).', [['', ov.output.filesEdited]]);
+  m('claude_ledger_project_spend_usd', 'Spend per project in USD (all time).',
+    ov.projects.map((p) => [`{project="${esc(p.name)}"}`, usd(p.cost)]));
+  return lines.join('\n') + '\n';
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = decodeURIComponent(url.pathname);
@@ -1660,6 +1689,11 @@ const server = http.createServer((req, res) => {
       if (!detail) return sendJSON(res, 404, { error: 'project not found' });
       return sendJSON(res, 200, detail);
     }
+    if (pathname === '/metrics') {
+      const ov = overview(null, null);
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(ov ? promMetrics(ov) : '');
+    }
     if (pathname === '/' || pathname === '/index.html') {
       return sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
     }
@@ -1707,6 +1741,7 @@ module.exports = {
   recordOutput,
   outputStats,
   computeInsights,
+  promMetrics,
   isCommitCommand,
   isPrCommand,
   emptyPunchGrid,

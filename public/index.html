@@ -274,6 +274,36 @@ function qs() {
   return s ? '?' + s : '';
 }
 
+// --- URL state (shareable / bookmarkable views) -----------------------------
+// Reflect the current project/session/range in the address bar so a view can be
+// linked, bookmarked, and walked with the browser's back/forward buttons.
+function browserQuery() {
+  const p = new URLSearchParams();
+  if (view.type === 'project' || view.type === 'session') p.set('project', view.projectId);
+  if (view.type === 'session') p.set('session', view.sessionId);
+  if (range.from) p.set('from', range.from);
+  if (range.to) p.set('to', range.to);
+  return p.toString();
+}
+function syncURL() {
+  const q = browserQuery();
+  try { history.pushState(null, '', q ? location.pathname + '?' + q : location.pathname); } catch (e) {}
+}
+function applyURLState() {
+  const p = new URLSearchParams(location.search);
+  const from = p.get('from') || null;
+  const to = p.get('to') || null;
+  range = { from, to };
+  document.getElementById('from').value = from || '';
+  document.getElementById('to').value = to || '';
+  setActivePreset(!from && !to ? 'all' : null);
+  const project = p.get('project');
+  const session = p.get('session');
+  if (project && session) { activeId = project; view = { type: 'session', projectId: project, sessionId: session }; }
+  else if (project) { activeId = project; view = { type: 'project', projectId: project, sessionId: null }; }
+  else { activeId = '__all__'; view = { type: 'overview', projectId: '__all__', sessionId: null }; }
+}
+
 // --- Date range -------------------------------------------------------------
 function localISO(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
@@ -295,6 +325,7 @@ function applyRange(newRange, presetName) {
   document.getElementById('from').value = newRange.from || '';
   document.getElementById('to').value = newRange.to || '';
   setActivePreset(presetName || null);
+  syncURL();
   loadProjects().then(() => refresh());
 }
 
@@ -747,11 +778,13 @@ function renderProjectList() {
 function selectProject(id) {
   activeId = id;
   view = { type: id === '__all__' ? 'overview' : 'project', projectId: id, sessionId: null };
+  syncURL();
   renderProjectList();
   refresh();
 }
 function openSession(projectId, sessionId) {
   view = { type: 'session', projectId, sessionId };
+  syncURL();
   refresh();
 }
 // silent=true is the live-refresh path: don't blank to "Loading…", keep the
@@ -991,6 +1024,14 @@ async function init() {
     else { startLiveTimers(); liveTick(); }     // catch up on return
   });
 
+  // Restore the view + range from the URL (deep link / reload), and keep the
+  // back/forward buttons working.
+  applyURLState();
+  window.addEventListener('popstate', () => {
+    applyURLState();
+    loadProjects().then(() => { if (PROJECTS.length) refresh(); });
+  });
+
   const data = await loadProjects();
   if (data.bounds) {
     ['from', 'to'].forEach((id) => {
@@ -999,7 +1040,7 @@ async function init() {
       if (data.bounds.max) el.max = data.bounds.max;
     });
   }
-  if (PROJECTS.length) selectProject('__all__');
+  if (PROJECTS.length) refresh();
 
   let wantLive = false;
   try { wantLive = localStorage.getItem('ledger.live') === '1'; } catch (e) {}
