@@ -91,6 +91,13 @@
   .section h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
   .csvlink { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--accent-2); margin-left: 10px; }
   .badge { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; vertical-align: middle; }
+  .insights { border-color: var(--accent); }
+  .insights h3 { color: var(--accent); }
+  .insight-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .insight { display: flex; gap: 10px; align-items: flex-start; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
+  .insight-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; }
+  .insight-title { font-weight: 600; font-size: 13px; }
+  .insight-detail { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
 
   .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
   .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
@@ -592,6 +599,18 @@ function reliabilitySection(r, totalCost) {
     <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
   </div>`;
 }
+// "Worth a look" — the ranked signals that stand out in the current range, shown
+// first so the dashboard points you at what matters before the wall of detail.
+function insightsSection(items) {
+  if (!items || !items.length) return '';
+  const dot = { warn: 'var(--warn)', good: 'var(--good)', info: 'var(--accent-2)' };
+  const cards = items.map((s) => `
+    <div class="insight">
+      <span class="insight-dot" style="background:${dot[s.tone] || 'var(--muted)'}"></span>
+      <div><div class="insight-title">${esc(s.title)}</div><div class="insight-detail">${esc(s.detail)}</div></div>
+    </div>`).join('');
+  return `<div class="section insights"><h3>⚡ Worth a look</h3><div class="insight-list">${cards}</div></div>`;
+}
 // Output / ROI: what the spend produced (commits, PRs, files touched) and the
 // cost per unit. A rough activity proxy, framed honestly — not a value judgment.
 function outputSection(o, cost) {
@@ -826,6 +845,7 @@ function renderOverview(d, opts) {
       <h2>All projects</h2>
       <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
     </div>
+    ${insightsSection(d.insights)}
     ${budgetSection(d.budget)}
     ${planSection(d.plan)}
     ${outputSection(d.output, t.cost)}
@@ -876,6 +896,7 @@ function renderDetail(d, opts) {
       <h2>${esc(d.name)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
+    ${insightsSection(d.insights)}
     ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', `${fmtDate(t.start)} → ${fmtDate(t.end)}`)}</div></div>

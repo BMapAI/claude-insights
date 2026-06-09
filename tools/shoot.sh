@@ -29,7 +29,7 @@ trap 'kill "$SRV" 2>/dev/null || true' EXIT
 curl -s --retry 40 --retry-connrefused --retry-delay 1 -o /dev/null "http://127.0.0.1:$PORT/api/projects"
 
 "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
-  --virtual-time-budget=8000 --window-size=1600,4150 \
+  --virtual-time-budget=8000 --window-size=1600,4320 \
   --screenshot="$OUT" "http://127.0.0.1:$PORT/" 2>/dev/null
 
 echo "Wrote $OUT"

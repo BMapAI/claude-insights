@@ -12,6 +12,13 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 
 ## Features
 
+- **"Worth a look" signals** — a ranked panel at the top of each view that surfaces
+  what actually stands out in the selected range: a spend spike, a pricey session,
+  concentrated spend, recovery/friction cost, a big trend vs the prior period, heavy
+  automation, an unrecognized model, or a slow-turn latency tail. Purely descriptive
+  (it points; it doesn't prescribe), ranked by dollar impact, and shown only when
+  something genuinely stands out — so the dashboard leads with signal instead of
+  fifteen equally-weighted panels.
 - **Per-project overview** — total cost, sessions, prompts, cost/prompt, tool calls,
   token usage, cache savings, spend-by-model split, daily-spend chart, top tools, and a
   sortable per-session table.

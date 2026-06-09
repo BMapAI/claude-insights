@@ -465,6 +465,98 @@ function outputStats(o, cost) {
   };
 }
 
+// --- Insights ("worth a look") ----------------------------------------------
+// Surface what stands out in the current range so the dashboard points you at it
+// instead of presenting every panel with equal weight. Purely descriptive
+// (observe, don't act) and derived from the same aggregates shown elsewhere;
+// ranked by dollar impact so the top of the list is the most worth noticing.
+function median(nums) {
+  if (!nums.length) return 0;
+  const a = nums.slice().sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function fmtMsShort(ms) {
+  if (ms >= 3600000) return `${(ms / 3600000).toFixed(1)}h`;
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+function computeInsights(v) {
+  const out = [];
+  const cost = (v.totals && v.totals.cost) || 0;
+  const usd = (x) => `$${(x || 0).toFixed(2)}`;
+  const pct = (x) => `${Math.round(x * 100)}%`;
+
+  // A single day's spend dwarfs the rest of the range.
+  if (Array.isArray(v.daily)) {
+    const active = v.daily.filter((d) => d.cost > 0);
+    if (active.length >= 4) {
+      const med = median(active.map((d) => d.cost));
+      const top = active.reduce((a, b) => (b.cost > a.cost ? b : a));
+      if (med > 0 && top.cost >= 2.5 * med) {
+        out.push({ kind: 'spike', sev: top.cost, tone: 'warn', title: 'Spend spike',
+          detail: `${top.date} cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median active day (${usd(med)}).` });
+      }
+    }
+  }
+  // One session dominates (per-project view).
+  if (Array.isArray(v.sessions) && v.sessions.length >= 4) {
+    const med = median(v.sessions.map((s) => s.cost));
+    const top = v.sessions.reduce((a, b) => (b.cost > a.cost ? b : a));
+    if (med > 0 && top.cost >= 3 * med) {
+      out.push({ kind: 'session', sev: top.cost, tone: 'info', title: 'Pricey session',
+        detail: `"${(top.title || 'untitled').slice(0, 60)}" cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median session.` });
+    }
+  }
+  // Spend concentrated in one project (all-projects view).
+  if (Array.isArray(v.projects) && v.projects.length >= 2 && cost > 0) {
+    const top = v.projects.reduce((a, b) => (b.cost > a.cost ? b : a));
+    if (top.cost / cost >= 0.6) {
+      out.push({ kind: 'concentration', sev: top.cost, tone: 'info', title: 'Concentrated spend',
+        detail: `${top.name} is ${pct(top.cost / cost)} of all spend (${usd(top.cost)}).` });
+    }
+  }
+  // Recovery spend after failed tool calls (friction).
+  if (v.reliability && v.reliability.wastedCost > 0 && v.reliability.totalErrors >= 3) {
+    const w = v.reliability.wastedCost;
+    if (w >= Math.max(0.5, 0.03 * cost)) {
+      out.push({ kind: 'recovery', sev: w, tone: 'warn', title: 'Recovery spend',
+        detail: `${usd(w)}${cost > 0 ? ` (${pct(w / cost)})` : ''} spent recovering from ${v.reliability.totalErrors} failed tool calls.` });
+    }
+  }
+  // Big move vs the prior equal-length period.
+  if (v.delta && v.delta.costPct != null && Math.abs(v.delta.costPct) >= 0.4 && Math.abs(v.delta.costChange) > 0) {
+    const up = v.delta.costChange > 0;
+    out.push({ kind: 'trend', sev: Math.abs(v.delta.costChange), tone: up ? 'warn' : 'good',
+      title: up ? 'Trending up' : 'Trending down',
+      detail: `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).` });
+  }
+  // Automation dominates spend.
+  if (Array.isArray(v.topEntrypoints) && v.topEntrypoints.length > 1 && cost > 0) {
+    const auto = v.topEntrypoints.find((e) => e.name === 'sdk-cli');
+    if (auto && auto.cost / cost >= 0.45) {
+      out.push({ kind: 'automation', sev: auto.cost, tone: 'info', title: 'Heavy automation',
+        detail: `Automated (sdk-cli) runs drove ${pct(auto.cost / cost)} of spend (${usd(auto.cost)}).` });
+    }
+  }
+  // Spend on an unrecognized model id (the estimate may be off).
+  if (Array.isArray(v.topModels) && cost > 0) {
+    const unknown = v.topModels.filter((m) => m.unknown).reduce((s, m) => s + m.cost, 0);
+    if (unknown / cost >= 0.05) {
+      out.push({ kind: 'unknown-model', sev: unknown, tone: 'warn', title: 'Unrecognized model',
+        detail: `${pct(unknown / cost)} of spend is on a model id priced as Opus by fallback — the estimate may be off.` });
+    }
+  }
+  // A few slow turns dominate the wait (latency tail, not cost).
+  if (v.time && v.time.turns >= 10 && v.time.medianMs > 0 && v.time.p90Ms >= 180000 && v.time.p90Ms >= 5 * v.time.medianMs) {
+    out.push({ kind: 'latency', sev: 0, tone: 'info', title: 'Slow-turn tail',
+      detail: `p90 turn is ${fmtMsShort(v.time.p90Ms)} vs a ${fmtMsShort(v.time.medianMs)} median — a few long turns dominate the wait.` });
+  }
+
+  return out.sort((a, b) => b.sev - a.sev).slice(0, 5);
+}
+
 // --- Activity punchcard -----------------------------------------------------
 // A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
 // classic punchcard, but priced. Built from in-range days only; cost is computed
@@ -988,6 +1080,7 @@ function projectDetail(folder, from, to) {
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
     output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
+    insights: computeInsights({ totals: { cost: totals.cost }, daily, sessions, delta, time: timeStats(durations, userPrompts, totals.cost), reliability: reliabilityStats(tools, toolErrors, errorFollowup), topModels: pricedModels(byModel), topEntrypoints: priceByName(byEntry) }),
   };
 }
 
@@ -1227,6 +1320,7 @@ function overview(from, to) {
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
     output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
+    insights: computeInsights({ totals: { cost: totals.cost }, daily, projects, delta, time: timeStats(durations, userPrompts, totals.cost), reliability: reliabilityStats(tools, toolErrors, errorFollowup), topModels: pricedModels(byModel), topEntrypoints: priceByName(byEntry) }),
   };
 }
 
@@ -1612,6 +1706,7 @@ module.exports = {
   timeStats,
   recordOutput,
   outputStats,
+  computeInsights,
   isCommitCommand,
   isPrCommand,
   emptyPunchGrid,
