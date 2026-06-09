@@ -497,6 +497,42 @@ function efficiencySection(e) {
     <div class="hint" style="margin-top:18px">Same token usage priced on another model: ${wi('sonnet')} · ${wi('haiku')} <span style="opacity:.7">— what the tokens would cost, not a quality comparison.</span></div>
   </div>`;
 }
+// Exact model-version split (opus-4-8 vs opus-4-7, …) shown under the family bar.
+function modelVersions(models) {
+  if (!models || !models.length) return '';
+  const total = models.reduce((s, m) => s + m.cost, 0);
+  if (total <= 0) return '';
+  const fam = (id) => id.includes('opus') ? 'opus' : id.includes('sonnet') ? 'sonnet' : id.includes('haiku') ? 'haiku' : '';
+  const rows = models.map((m) =>
+    `<span class="item"><span class="dot" style="background:${MODEL_COLORS[fam(m.name)] || '#888'}"></span>${esc(m.name)} — ${fmtUSD(m.cost)} (${(m.cost / total * 100).toFixed(0)}%)</span>`).join('');
+  return `<div class="legend" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">${rows}</div>`;
+}
+// Tool reliability: error rate, recovery spend, and a per-tool error breakdown.
+function reliabilitySection(r, totalCost) {
+  if (!r || !r.totalCalls) return '';
+  const wastedPct = totalCost > 0 ? (r.wastedCost / totalCost * 100) : 0;
+  const rows = r.byTool.slice(0, 20).map((t) =>
+    `<tr>
+       <td>${esc(t.name)}</td>
+       <td class="num">${fmtNum(t.errors)}</td>
+       <td class="num">${fmtNum(t.calls)}</td>
+       <td class="num">${(t.rate * 100).toFixed(1)}%</td>
+       <td class="num"><span class="share"><span class="share-fill" style="width:${Math.min(t.rate * 100, 100).toFixed(1)}%;background:var(--warn)"></span></span></td>
+     </tr>`).join('');
+  return `<div class="section">
+    <h3>Tool reliability</h3>
+    <div class="effgrid">
+      <div class="eff"><div class="label">Error rate</div><div class="value">${(r.errorRate * 100).toFixed(1)}%</div></div>
+      <div class="eff"><div class="label">Failed calls</div><div class="value">${fmtNum(r.totalErrors)}<span class="u">/ ${fmtNum(r.totalCalls)}</span></div></div>
+      <div class="eff"><div class="label">Recovery spend</div><div class="value cost">${fmtUSD(r.wastedCost)}</div></div>
+      <div class="eff"><div class="label">Recovery share</div><div class="value">${wastedPct.toFixed(1)}%</div></div>
+    </div>
+    ${r.byTool.length
+      ? `<table style="margin-top:16px"><thead><tr><th>Tool</th><th class="num">Errors</th><th class="num">Calls</th><th class="num">Rate</th><th class="num"></th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div class="hint" style="margin-top:12px">No tool errors in range. 🎉</div>'}
+    <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
+  </div>`;
+}
 function budgetSection(b) {
   if (!b) return '';
   const monthLabel = new Date(b.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -709,7 +745,8 @@ function renderOverview(d, opts) {
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
     ${efficiencySection(d.efficiency)}
-    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    ${reliabilitySection(d.reliability, t.cost)}
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -753,7 +790,8 @@ function renderDetail(d, opts) {
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
     ${efficiencySection(d.efficiency)}
-    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    ${reliabilitySection(d.reliability, t.cost)}
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -799,9 +837,10 @@ function renderSession(d) {
       <div class="card"><div class="label">Duration</div><div class="value">${fmtDuration(d.start, d.end)}</div><div class="hint">wall clock</div></div>
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">${fmtTokens(t.tokens.cacheRead)} read</div></div>
     </div>
-    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
+    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
+    ${reliabilitySection(d.reliability, t.cost)}
     <div class="section">
       <h3>Prompts (${d.prompts.length})</h3>
       ${d.prompts.length ? d.prompts.map((p, i) => `<div class="prompt"><div class="when">#${i + 1} · ${fmtDateTime(p.ts)}</div><div class="text">${esc(p.text)}</div></div>`).join('') : '<div class="loading">No user prompts recorded.</div>'}

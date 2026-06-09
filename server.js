@@ -338,6 +338,34 @@ function efficiencyStats(grand, userPrompts, toolUses) {
   };
 }
 
+// Tool reliability + recovery spend. `tools` is { name: callCount } (every
+// tool_use), `toolErrors` is { name: failedResultCount }, and `errorFollowup` is
+// a { family: bundle } map of the turns that ran right after a failed result.
+function reliabilityStats(tools, toolErrors, errorFollowup) {
+  let totalCalls = 0;
+  let totalErrors = 0;
+  const byTool = Object.entries(tools || {}).map(([name, calls]) => {
+    const errors = (toolErrors && toolErrors[name]) || 0;
+    totalCalls += calls;
+    totalErrors += errors;
+    return { name, calls, errors, rate: calls > 0 ? errors / calls : 0 };
+  });
+  // Errors for a tool that was never seen as a tool_use (e.g. id unmatched) still count.
+  for (const [name, errors] of Object.entries(toolErrors || {})) {
+    if (tools && tools[name] != null) continue;
+    totalErrors += errors;
+    byTool.push({ name, calls: 0, errors, rate: 0 });
+  }
+  byTool.sort((a, b) => b.errors - a.errors || b.calls - a.calls);
+  return {
+    totalCalls,
+    totalErrors,
+    errorRate: totalCalls > 0 ? totalErrors / totalCalls : 0,
+    wastedCost: priceBundles(errorFollowup || {}).cost,
+    byTool: byTool.filter((t) => t.errors > 0),
+  };
+}
+
 // --- Activity punchcard -----------------------------------------------------
 // A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
 // classic punchcard, but priced. Built from in-range days only; cost is computed
@@ -406,7 +434,15 @@ function parseSession(filePath) {
     const key = dayOf(ts, data.start);
     if (!data.days[key]) {
       // hours: { 0..23 -> { byFamily, messages } } for the activity punchcard.
-      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {}, bySkill: {}, byMcp: {}, hours: {} };
+      // toolErrors: { toolName -> failed-call count }.
+      // errorFollowup: { family -> bundle } — usage of assistant turns that ran
+      //   right after a failed tool result (a proxy for retry/recovery spend).
+      // byModel: { exactModelId -> { family -> bundle } } for the precise model mix.
+      data.days[key] = {
+        userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {},
+        byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, hours: {},
+        toolErrors: {}, errorFollowup: {},
+      };
     }
     return data.days[key];
   };
@@ -416,6 +452,14 @@ function parseSession(filePath) {
     if (!day.hours[h]) day.hours[h] = { byFamily: {}, messages: 0 };
     return day.hours[h];
   };
+
+  // Session-local, used while walking the linear log:
+  //  toolNames maps a tool_use id -> tool name so a later tool_result (which only
+  //  carries the id) can be charged to the right tool.
+  //  pendingError flags that the most recent tool result failed, so the *next*
+  //  assistant turn's usage counts as recovery spend.
+  const toolNames = {};
+  let pendingError = false;
 
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -439,6 +483,16 @@ function parseSession(filePath) {
       if (typeof content === 'string' && content.trim()) {
         if (!data.firstPrompt) data.firstPrompt = content;
         getDay(o.timestamp).userPrompts += 1;
+      } else if (Array.isArray(content)) {
+        // Tool results ride back as array-content user messages; tally failures.
+        for (const b of content) {
+          if (b && b.type === 'tool_result' && b.is_error) {
+            pendingError = true;
+            const name = toolNames[b.tool_use_id] || 'unknown';
+            const day = getDay(o.timestamp);
+            day.toolErrors[name] = (day.toolErrors[name] || 0) + 1;
+          }
+        }
       }
     }
 
@@ -456,6 +510,7 @@ function parseSession(filePath) {
             day.toolUses += 1;
             const name = b.name || 'unknown';
             day.tools[name] = (day.tools[name] || 0) + 1;
+            if (b.id) toolNames[b.id] = name; // for later tool_result matching
           }
         }
       }
@@ -465,6 +520,14 @@ function parseSession(filePath) {
         const bundle = usageToBundle(u);
         addBundle(getFam(day, family), bundle);
         addBundle(famBundleIn(hour.byFamily, family), bundle);
+        // Track the exact model id (opus-4-8 vs opus-4-7, etc.); skip synthetic
+        // messages, which carry no billable tokens.
+        if (msg.model && msg.model !== '<synthetic>') addBundle(nestFam(day.byModel, msg.model, family), bundle);
+        // Spend on the turn that followed a failed tool result = recovery cost.
+        if (pendingError) {
+          addBundle(famBundleIn(day.errorFollowup, family), bundle);
+          pendingError = false;
+        }
         // Attribute the same tokens to the skill / MCP server that drove the turn,
         // when Claude Code tagged the message. Both ride on usage-bearing messages.
         if (o.attributionSkill) addBundle(nestFam(day.bySkill, o.attributionSkill, family), bundle);
@@ -517,7 +580,10 @@ function aggregateSession(s, from, to) {
   const byFamily = {};
   const bySkill = {};
   const byMcp = {};
+  const byModel = {};
   const tools = {};
+  const toolErrors = {};
+  const errorFollowup = {};
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
@@ -529,14 +595,14 @@ function aggregateSession(s, from, to) {
     assistantMessages += d.assistantMessages;
     toolUses += d.toolUses;
     for (const [n, c] of Object.entries(d.tools)) tools[n] = (tools[n] || 0) + c;
-    for (const [fam, b] of Object.entries(d.byFamily)) {
-      if (!byFamily[fam]) byFamily[fam] = emptyBundle();
-      addBundle(byFamily[fam], b);
-    }
+    for (const [n, c] of Object.entries(d.toolErrors || {})) toolErrors[n] = (toolErrors[n] || 0) + c;
+    for (const [fam, b] of Object.entries(d.byFamily)) addBundle(famBundleIn(byFamily, fam), b);
+    for (const [fam, b] of Object.entries(d.errorFollowup || {})) addBundle(famBundleIn(errorFollowup, fam), b);
     mergeByName(bySkill, d.bySkill || {});
     mergeByName(byMcp, d.byMcp || {});
+    mergeByName(byModel, d.byModel || {});
   }
-  return { byFamily, bySkill, byMcp, tools, userPrompts, assistantMessages, toolUses, has };
+  return { byFamily, bySkill, byMcp, byModel, tools, toolErrors, errorFollowup, userPrompts, assistantMessages, toolUses, has };
 }
 
 // --- Project-level aggregation ---------------------------------------------
@@ -549,7 +615,10 @@ function projectDetail(folder, from, to) {
   const grand = {}; // family -> bundle
   const bySkill = {}; // skill name -> family -> bundle
   const byMcp = {}; // mcp server name -> family -> bundle
+  const byModel = {}; // exact model id -> family -> bundle
   const tools = {};
+  const toolErrors = {};
+  const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
   const dayMap = {}; // date -> { byFamily, messages, userPrompts }
   const punch = emptyPunchGrid(); // [weekday][hour] activity, priced at the end
   const prev = previousPeriod(from, to);
@@ -589,12 +658,15 @@ function projectDetail(folder, from, to) {
     assistantMessages += agg.assistantMessages;
     toolUses += agg.toolUses;
     for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
+    for (const [n, c] of Object.entries(agg.toolErrors)) toolErrors[n] = (toolErrors[n] || 0) + c;
     for (const [fam, b] of Object.entries(agg.byFamily)) {
       if (!grand[fam]) grand[fam] = emptyBundle();
       addBundle(grand[fam], b);
     }
+    for (const [fam, b] of Object.entries(agg.errorFollowup)) addBundle(famBundleIn(errorFollowup, fam), b);
     mergeByName(bySkill, agg.bySkill);
     mergeByName(byMcp, agg.byMcp);
+    mergeByName(byModel, agg.byModel);
 
     // Per-day rollup for the chart.
     for (const [day, d] of Object.entries(s.days)) {
@@ -667,8 +739,10 @@ function projectDetail(folder, from, to) {
     daily,
     punchcard: pricePunchcard(punch),
     topTools,
+    topModels: priceByName(byModel),
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
+    reliability: reliabilityStats(tools, toolErrors, errorFollowup),
     sessions,
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
@@ -687,7 +761,10 @@ function overview(from, to) {
   const grand = {};
   const bySkill = {}; // skill name -> family -> bundle
   const byMcp = {}; // mcp server name -> family -> bundle
+  const byModel = {}; // exact model id -> family -> bundle
   const tools = {};
+  const toolErrors = {};
+  const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
   const dayMap = {};
   const punch = emptyPunchGrid(); // [weekday][hour] activity across all projects
   const monthGrand = {}; // month-to-date tokens, independent of the selected range
@@ -760,8 +837,11 @@ function overview(from, to) {
         addBundle(grand[fam], b);
       }
       for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
+      for (const [n, c] of Object.entries(agg.toolErrors)) toolErrors[n] = (toolErrors[n] || 0) + c;
+      for (const [fam, b] of Object.entries(agg.errorFollowup)) addBundle(famBundleIn(errorFollowup, fam), b);
       mergeByName(bySkill, agg.bySkill);
       mergeByName(byMcp, agg.byMcp);
+      mergeByName(byModel, agg.byModel);
       userPrompts += agg.userPrompts;
       assistantMessages += agg.assistantMessages;
       toolUses += agg.toolUses;
@@ -852,8 +932,10 @@ function overview(from, to) {
     daily,
     punchcard: pricePunchcard(punch),
     topTools,
+    topModels: priceByName(byModel),
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
+    reliability: reliabilityStats(tools, toolErrors, errorFollowup),
     projects,
     budget,
     delta,
@@ -957,6 +1039,11 @@ function sessionDetail(folder, sessionId) {
     timeline: [],
   };
   const grand = {};
+  const byModel = {};
+  const toolErrors = {};
+  const errorFollowup = {};
+  const toolNames = {};
+  let pendingError = false;
   let cumCost = 0;
 
   for (const line of raw.split('\n')) {
@@ -980,6 +1067,14 @@ function sessionDetail(folder, sessionId) {
       if (typeof content === 'string' && content.trim()) {
         if (!out.firstPrompt) out.firstPrompt = content;
         out.prompts.push({ ts: o.timestamp || null, text: content.slice(0, 4000) });
+      } else if (Array.isArray(content)) {
+        for (const b of content) {
+          if (b && b.type === 'tool_result' && b.is_error) {
+            pendingError = true;
+            const name = toolNames[b.tool_use_id] || 'unknown';
+            toolErrors[name] = (toolErrors[name] || 0) + 1;
+          }
+        }
       }
     }
 
@@ -991,6 +1086,7 @@ function sessionDetail(folder, sessionId) {
           if (b && b.type === 'tool_use') {
             const name = b.name || 'unknown';
             out.tools[name] = (out.tools[name] || 0) + 1;
+            if (b.id) toolNames[b.id] = name;
           }
         }
       }
@@ -1002,6 +1098,11 @@ function sessionDetail(folder, sessionId) {
         out.timeline.push({ ts: o.timestamp || null, cost: msgCost, cumCost });
         if (!grand[family]) grand[family] = emptyBundle();
         addBundle(grand[family], fb);
+        if (msg.model && msg.model !== '<synthetic>') addBundle(nestFam(byModel, msg.model, family), fb);
+        if (pendingError) {
+          addBundle(famBundleIn(errorFollowup, family), fb);
+          pendingError = false;
+        }
       }
     }
   }
@@ -1029,6 +1130,8 @@ function sessionDetail(folder, sessionId) {
     topTools: Object.entries(out.tools)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count),
+    topModels: priceByName(byModel),
+    reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     timeline: out.timeline,
   };
 }
@@ -1139,6 +1242,7 @@ module.exports = {
   priceBundles,
   priceByName,
   efficiencyStats,
+  reliabilityStats,
   emptyPunchGrid,
   accumulatePunchcard,
   pricePunchcard,

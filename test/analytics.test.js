@@ -83,3 +83,38 @@ test('accumulatePunchcard tolerates a day with no hours bucket', () => {
   const priced = L.pricePunchcard(grid);
   assert.equal(priced.cost[2][0], 0);
 });
+
+test('reliabilityStats computes per-tool rates, totals, and recovery spend', () => {
+  const tools = { Edit: 100, Bash: 50, Read: 200 };
+  const toolErrors = { Edit: 10, Bash: 5 };
+  const followup = { opus: L.emptyBundle() };
+  followup.opus.output = 1000;
+
+  const r = L.reliabilityStats(tools, toolErrors, followup);
+  assert.equal(r.totalCalls, 350);
+  assert.equal(r.totalErrors, 15);
+  assert.ok(Math.abs(r.errorRate - 15 / 350) < 1e-9);
+  assert.ok(Math.abs(r.wastedCost - L.priceBundles(followup).cost) < 1e-9);
+  assert.ok(r.wastedCost > 0);
+
+  // Only tools with ≥1 error are listed, worst (most errors) first.
+  assert.deepEqual(r.byTool.map((t) => t.name), ['Edit', 'Bash']);
+  assert.ok(Math.abs(r.byTool[0].rate - 0.1) < 1e-9);
+});
+
+test('reliabilityStats counts errors for tools that were never seen as a tool_use', () => {
+  // An error whose tool_use id never matched lands under "unknown" with calls=0.
+  const r = L.reliabilityStats({ Read: 5 }, { unknown: 3 }, {});
+  assert.equal(r.totalErrors, 3);
+  assert.equal(r.totalCalls, 5);
+  const unknown = r.byTool.find((t) => t.name === 'unknown');
+  assert.ok(unknown && unknown.calls === 0 && unknown.errors === 3);
+});
+
+test('reliabilityStats is all-zero / empty for clean input', () => {
+  const r = L.reliabilityStats({ Read: 5 }, {}, {});
+  assert.equal(r.totalErrors, 0);
+  assert.equal(r.errorRate, 0);
+  assert.equal(r.wastedCost, 0);
+  assert.deepEqual(r.byTool, []);
+});
