@@ -71,7 +71,9 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
   present, so cache-write costs are exact rather than estimated.
-- **Read-only** — never writes to `~/.claude`; only reads the transcripts.
+- **Read-only by default** — never writes to `~/.claude`; only reads the transcripts.
+  (The optional durable-history rollup writes a compact store *outside* `~/.claude`,
+  and only when you enable it — see below.)
 - **No dependencies** — Node standard library only.
 
 ## Run
@@ -92,6 +94,8 @@ Configuration via environment variables:
 | `CONFIG_FILE` | `./config.json` | Path to the settings file (budget; see below) |
 | `MONTHLY_BUDGET` | _(unset)_ | Monthly budget in USD; overrides `config.json`. Powers the "This month" bar + projection. |
 | `PLAN_MONTHLY_FEE` | _(unset)_ | Flat monthly subscription fee in USD; overrides `config.json`. Powers the "Plan value" leverage panel. |
+| `LEDGER_PERSIST` | _(unset)_ | Set to `1` to persist durable history to `~/.claude-ledger/rollups.json` (see Durable history). |
+| `CLAUDE_LEDGER_DATA` | _(unset)_ | Path to the durable-history store; overrides `LEDGER_PERSIST`'s default location. |
 
 ## Team / shared-server use
 
@@ -202,6 +206,33 @@ To keep a longer history, raise `cleanupPeriodDays` in your Claude Code settings
 
 Note this grows `~/.claude/projects` unbounded — it keeps every transcript for the
 configured number of days.
+
+## Durable history (optional)
+
+Raising `cleanupPeriodDays` keeps transcripts longer but grows `~/.claude`
+unbounded, and there's still a hard wall once they're deleted. As an alternative,
+Ledger can **persist a compact rollup** of each settled session's per-day token
+aggregates to a small JSON store *outside* `~/.claude`, then fold those aged-out
+sessions back into every total and chart — so history survives transcript cleanup
+without keeping the raw transcripts around.
+
+It's **opt-in** (the app is read-only by default). Enable it either way:
+
+```bash
+LEDGER_PERSIST=1 node server.js                            # writes ~/.claude-ledger/rollups.json
+CLAUDE_LEDGER_DATA=/path/to/rollups.json node server.js    # or choose the path
+```
+
+- **Tokens are stored, never dollars**, so `pricing.json` stays authoritative —
+  editing rates reprices archived history too.
+- Only **settled** sessions (last activity before today) are written, and only
+  when their transcript changed — an in-progress session doesn't rewrite the store
+  on every refresh. As a rough guide, ~300 sessions is ~0.5 MB.
+- Archived sessions appear in every total, chart, and the projects leaderboard,
+  but aren't clickable in the per-project session table (the transcript is gone, so
+  there's no drill-down to open).
+- The store lives outside `~/.claude`, so Claude Code's cleanup never touches it.
+  Delete the file to start over; it's rebuilt from whatever transcripts remain.
 
 ## How it works
 

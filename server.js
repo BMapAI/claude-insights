@@ -686,6 +686,95 @@ function projectName(folder, cwd) {
   return folder.replace(/^-/, '').replace(/-/g, '/');
 }
 
+// --- Durable rollups (opt-in) ----------------------------------------------
+// Claude Code deletes transcripts after `cleanupPeriodDays`, so the dashboard's
+// history is otherwise capped at whatever is still on disk. When enabled, Ledger
+// persists each *settled* session's parsed day-aggregates to a JSON store OUTSIDE
+// ~/.claude and folds aged-out sessions back into every total and chart. Tokens
+// are stored, never dollars, so pricing.json stays authoritative.
+//
+// Opt-in (the app is read-only by default): set LEDGER_PERSIST=1 to write
+// ~/.claude-ledger/rollups.json, or CLAUDE_LEDGER_DATA=/path/to/file.json.
+const ROLLUP_VERSION = 1;
+function rollupPath() {
+  if (process.env.CLAUDE_LEDGER_DATA) return process.env.CLAUDE_LEDGER_DATA;
+  const flag = process.env.LEDGER_PERSIST;
+  if (flag && flag !== '0' && flag !== 'false') return path.join(os.homedir(), '.claude-ledger', 'rollups.json');
+  return null;
+}
+
+// In-memory mirror of the store, refreshed by file mtime so repeated requests
+// don't re-read it. Shape: { v, sessions: { <folder>: { <id>: { mtimeMs, size, data } } } }.
+let rollupCache = { key: null, mtimeMs: null, store: null };
+function loadRollups() {
+  const p = rollupPath();
+  if (!p) return null;
+  let mtimeMs = null;
+  try { mtimeMs = fs.statSync(p).mtimeMs; } catch {}
+  if (rollupCache.key === p && rollupCache.mtimeMs === mtimeMs && rollupCache.store) return rollupCache.store;
+  let store = { v: ROLLUP_VERSION, sessions: {} };
+  if (mtimeMs != null) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && parsed.v === ROLLUP_VERSION && parsed.sessions && typeof parsed.sessions === 'object') store = parsed;
+    } catch { /* malformed → fail safe to transcripts-only */ }
+  }
+  rollupCache = { key: p, mtimeMs, store };
+  return store;
+}
+
+// Persist the settled live sessions seen during a scan (last activity before
+// today, so an in-progress session doesn't rewrite the store every tick). Each
+// entry is keyed by session id and skipped unless its file's mtime+size changed.
+function persistRollups(scanned) {
+  const p = rollupPath();
+  if (!p) return;
+  try {
+    const store = loadRollups();
+    const today = currentMonthInfo().today;
+    let changed = false;
+    for (const { folder, file } of scanned) {
+      const cached = sessionCache.get(file);
+      const data = cached ? cached.data : parseSession(file);
+      if (!data || !data.end || data.end.slice(0, 10) >= today) continue; // unsettled → skip
+      let sig = null;
+      if (cached) sig = { mtimeMs: cached.mtimeMs, size: cached.size };
+      else { try { const st = fs.statSync(file); sig = { mtimeMs: st.mtimeMs, size: st.size }; } catch {} }
+      if (!sig) continue;
+      const bucket = store.sessions[folder] || (store.sessions[folder] = {});
+      const existing = bucket[data.id];
+      if (!existing || existing.mtimeMs !== sig.mtimeMs || existing.size !== sig.size) {
+        bucket[data.id] = { mtimeMs: sig.mtimeMs, size: sig.size, data };
+        changed = true;
+      }
+    }
+    if (changed) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      const tmp = `${p}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(store));
+      fs.renameSync(tmp, p);
+      let m = null; try { m = fs.statSync(p).mtimeMs; } catch {}
+      rollupCache = { key: p, mtimeMs: m, store };
+    }
+  } catch (err) {
+    console.error(`[rollups] persist failed: ${(err && err.message) || err}`);
+  }
+}
+
+// Archived sessions for a project: stored sessions whose transcript is no longer
+// on disk (id not in the live set). Each returned value is parsed-session-shaped,
+// so callers fold it in exactly like a freshly parsed session.
+function archivedFor(folder, liveIds) {
+  const store = loadRollups();
+  if (!store || !store.sessions[folder]) return [];
+  const out = [];
+  for (const [id, entry] of Object.entries(store.sessions[folder])) {
+    if (liveIds.has(id) || !entry || !entry.data) continue;
+    out.push(entry.data);
+  }
+  return out;
+}
+
 // --- Date filtering ---------------------------------------------------------
 function inRange(day, from, to) {
   if (from && day < from) return false;
@@ -739,7 +828,17 @@ function projectDetail(folder, from, to) {
   const projectPath = resolveProjectDir(folder);
   if (!projectPath) return null;
   const files = listSessionFiles(projectPath);
-  if (files.length === 0) return null;
+  // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
+  const liveIds = new Set();
+  const items = [];
+  for (const f of files) {
+    const s = parseSession(f);
+    if (!s) continue;
+    liveIds.add(s.id);
+    items.push({ s, live: true });
+  }
+  for (const s of archivedFor(folder, liveIds)) items.push({ s, live: false });
+  if (items.length === 0) return null;
 
   const grand = {}; // family -> bundle
   const bySkill = {}; // skill name -> family -> bundle
@@ -769,9 +868,7 @@ function projectDetail(folder, from, to) {
   let dataEnd = null;
   const sessions = [];
 
-  for (const f of files) {
-    const s = parseSession(f);
-    if (!s) continue;
+  for (const { s, live } of items) {
     if (s.cwd && !cwd) cwd = s.cwd;
     if (s.gitBranch && !gitBranch) gitBranch = s.gitBranch;
 
@@ -824,6 +921,7 @@ function projectDetail(folder, from, to) {
       if (!dataEnd || day > dataEnd) dataEnd = day;
     }
 
+    if (!live) continue; // archived sessions count in totals but aren't clickable (transcript is gone)
     const priced = priceBundles(agg.byFamily);
     sessions.push({
       id: s.id,
@@ -868,7 +966,7 @@ function projectDetail(folder, from, to) {
       assistantMessages,
       toolUses,
       sessions: sessionsInRange,
-      sessionsTotal: files.length,
+      sessionsTotal: items.length,
       start: dataStart,
       end: dataEnd,
     },
@@ -930,12 +1028,24 @@ function overview(from, to) {
   let dataStart = null;
   let dataEnd = null;
   const projects = [];
+  const scanned = []; // live sessions to persist to the rollup store
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const projectPath = path.join(PROJECTS_DIR, e.name);
     const files = listSessionFiles(projectPath);
-    if (files.length === 0) continue;
+    // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
+    const liveIds = new Set();
+    const items = [];
+    for (const f of files) {
+      const s = parseSession(f);
+      if (!s) continue;
+      liveIds.add(s.id);
+      items.push(s);
+      scanned.push({ folder: e.name, file: f });
+    }
+    for (const s of archivedFor(e.name, liveIds)) items.push(s);
+    if (items.length === 0) continue;
 
     const pGrand = {};
     const pPrevGrand = {};
@@ -946,9 +1056,7 @@ function overview(from, to) {
     let lastActive = null;
     let active = false;
 
-    for (const f of files) {
-      const s = parseSession(f);
-      if (!s) continue;
+    for (const s of items) {
       if (s.cwd && !cwd) cwd = s.cwd;
       if (s.end && (!lastActive || s.end > lastActive)) lastActive = s.end;
 
@@ -1037,6 +1145,8 @@ function overview(from, to) {
       costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
     });
   }
+
+  persistRollups(scanned);
 
   const totals = priceBundles(grand);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
@@ -1132,12 +1242,24 @@ function listProjects(from, to) {
   const projects = [];
   let minDate = null;
   let maxDate = null;
+  const scanned = []; // live sessions to persist to the rollup store
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const projectPath = path.join(PROJECTS_DIR, e.name);
     const files = listSessionFiles(projectPath);
-    if (files.length === 0) continue;
+    // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
+    const liveIds = new Set();
+    const items = [];
+    for (const f of files) {
+      const s = parseSession(f);
+      if (!s) continue;
+      liveIds.add(s.id);
+      items.push(s);
+      scanned.push({ folder: e.name, file: f });
+    }
+    for (const s of archivedFor(e.name, liveIds)) items.push(s);
+    if (items.length === 0) continue;
 
     const grand = {};
     let cwd = null;
@@ -1145,9 +1267,7 @@ function listProjects(from, to) {
     let prompts = 0;
     let lastActive = null;
 
-    for (const f of files) {
-      const s = parseSession(f);
-      if (!s) continue;
+    for (const s of items) {
       if (s.cwd && !cwd) cwd = s.cwd;
       if (s.start) {
         const d = s.start.slice(0, 10);
@@ -1182,6 +1302,7 @@ function listProjects(from, to) {
     });
   }
 
+  persistRollups(scanned);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
   return { projects, bounds: { min: minDate, max: maxDate } };
 }
@@ -1499,6 +1620,13 @@ module.exports = {
   inRange,
   aggregateSession,
   parseSession,
+  rollupPath,
+  loadRollups,
+  persistRollups,
+  archivedFor,
+  projectDetail,
+  overview,
+  listProjects,
   toCSV,
   csvCell,
 };
