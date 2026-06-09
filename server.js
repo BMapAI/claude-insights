@@ -35,32 +35,83 @@ const DEFAULT_PRICING = {
   cacheWrite1hMultiplier: 2.0,
 };
 
-let pricingCache = { mtimeMs: null, value: DEFAULT_PRICING, fromFile: false };
-function getPricing() {
-  try {
-    const st = fs.statSync(PRICING_FILE);
-    if (pricingCache.mtimeMs === st.mtimeMs && pricingCache.fromFile) return pricingCache.value;
-    const raw = JSON.parse(fs.readFileSync(PRICING_FILE, 'utf8'));
-    const merged = {
-      ...DEFAULT_PRICING,
-      ...raw,
-      opus: { ...DEFAULT_PRICING.opus, ...(raw.opus || {}) },
-      sonnet: { ...DEFAULT_PRICING.sonnet, ...(raw.sonnet || {}) },
-      haiku: { ...DEFAULT_PRICING.haiku, ...(raw.haiku || {}) },
-    };
-    pricingCache = { mtimeMs: st.mtimeMs, value: merged, fromFile: true };
-    return merged;
-  } catch {
-    return DEFAULT_PRICING; // missing or invalid file → built-in defaults
+// Validate a parsed pricing.json. Every field is optional (partial overrides are
+// allowed), but anything present must be a non-negative finite number so a typo
+// can't silently produce nonsense costs. Returns the list of problems (empty = ok).
+function validatePricing(raw) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return ['top-level value must be a JSON object'];
   }
+  const errors = [];
+  const checkNum = (val, label) => {
+    if (typeof val !== 'number' || !isFinite(val) || val < 0) {
+      errors.push(`"${label}" must be a non-negative number`);
+    }
+  };
+  for (const fam of ['opus', 'sonnet', 'haiku']) {
+    if (raw[fam] == null) continue;
+    if (typeof raw[fam] !== 'object' || Array.isArray(raw[fam])) {
+      errors.push(`"${fam}" must be an object with input/output rates`);
+      continue;
+    }
+    for (const k of ['input', 'output']) {
+      if (raw[fam][k] != null) checkNum(raw[fam][k], `${fam}.${k}`);
+    }
+  }
+  for (const k of ['cacheReadMultiplier', 'cacheWrite5mMultiplier', 'cacheWrite1hMultiplier']) {
+    if (raw[k] != null) checkNum(raw[k], k);
+  }
+  return errors;
 }
-function pricingIsFromFile() {
+
+// Loads + caches pricing keyed by file mtime. A missing file is the normal case
+// (built-in defaults, silent). A file that exists but is malformed or has bad
+// values is a misconfiguration: warn loudly (once per version) and fall back to
+// defaults rather than silently pricing at rates the user thinks they overrode.
+let pricingCache = { mtimeMs: null, value: DEFAULT_PRICING, fromFile: false };
+function loadPricing() {
+  let st;
   try {
-    fs.statSync(PRICING_FILE);
-    return true;
+    st = fs.statSync(PRICING_FILE);
   } catch {
-    return false;
+    pricingCache = { mtimeMs: null, value: DEFAULT_PRICING, fromFile: false };
+    return pricingCache;
   }
+  if (pricingCache.mtimeMs === st.mtimeMs) return pricingCache;
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(PRICING_FILE, 'utf8'));
+  } catch (err) {
+    console.error(`[pricing] ${PRICING_FILE} is not valid JSON (${err.message}). Using built-in default rates.`);
+    pricingCache = { mtimeMs: st.mtimeMs, value: DEFAULT_PRICING, fromFile: false };
+    return pricingCache;
+  }
+  const errors = validatePricing(raw);
+  if (errors.length) {
+    console.error(
+      `[pricing] ${PRICING_FILE} has invalid values; using built-in default rates instead:\n  - ` +
+        errors.join('\n  - ')
+    );
+    pricingCache = { mtimeMs: st.mtimeMs, value: DEFAULT_PRICING, fromFile: false };
+    return pricingCache;
+  }
+  const merged = {
+    ...DEFAULT_PRICING,
+    ...raw,
+    opus: { ...DEFAULT_PRICING.opus, ...(raw.opus || {}) },
+    sonnet: { ...DEFAULT_PRICING.sonnet, ...(raw.sonnet || {}) },
+    haiku: { ...DEFAULT_PRICING.haiku, ...(raw.haiku || {}) },
+  };
+  pricingCache = { mtimeMs: st.mtimeMs, value: merged, fromFile: true };
+  return pricingCache;
+}
+function getPricing() {
+  return loadPricing().value;
+}
+// True only when a valid pricing.json is actually driving the displayed rates.
+function pricingIsFromFile() {
+  return loadPricing().fromFile;
 }
 
 // Monthly budget (USD): MONTHLY_BUDGET env wins, else config.json's monthlyBudget.
@@ -879,17 +930,7 @@ function sessionDetail(folder, sessionId) {
       }
       const u = msg.usage;
       if (u) {
-        const fb = emptyBundle();
-        fb.input = u.input_tokens || 0;
-        fb.output = u.output_tokens || 0;
-        fb.cacheRead = u.cache_read_input_tokens || 0;
-        const cc = u.cache_creation || {};
-        if (cc.ephemeral_5m_input_tokens != null || cc.ephemeral_1h_input_tokens != null) {
-          fb.cw5 = cc.ephemeral_5m_input_tokens || 0;
-          fb.cw1 = cc.ephemeral_1h_input_tokens || 0;
-        } else {
-          fb.cwOther = u.cache_creation_input_tokens || 0;
-        }
+        const fb = usageToBundle(u);
         const msgCost = priceBundles({ [family]: fb }).cost;
         cumCost += msgCost;
         out.timeline.push({ ts: o.timestamp || null, cost: msgCost, cumCost });
@@ -1007,6 +1048,33 @@ const server = http.createServer((req, res) => {
     sendJSON(res, 500, { error: String((err && err.message) || err) });
   }
 });
+
+// Pure helpers are exported for the test suite (see test/). Requiring this file
+// does not start the server — that only happens when run as the main module.
+module.exports = {
+  DEFAULT_PRICING,
+  getPricing,
+  validatePricing,
+  pricingIsFromFile,
+  getMonthlyBudget,
+  currentMonthInfo,
+  shiftDay,
+  previousPeriod,
+  makeDelta,
+  modelFamily,
+  emptyBundle,
+  addBundle,
+  usageToBundle,
+  nestFam,
+  mergeByName,
+  priceBundles,
+  priceByName,
+  efficiencyStats,
+  inRange,
+  aggregateSession,
+};
+
+if (require.main !== module) return;
 
 // Localhost by default on shared hosts; auto-pick a free port when PORT unset.
 const portWasSet = process.env.PORT != null;
