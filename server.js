@@ -557,6 +557,73 @@ function computeInsights(v) {
   return out.sort((a, b) => b.sev - a.sev).slice(0, 5);
 }
 
+// --- Work log ("what I built") ----------------------------------------------
+// The accomplishment side of ROI: a shareable summary of what the spend produced
+// — commits, PRs, files, the sessions worked on, and recurring title words — for
+// the selected range. Derived from existing aggregates; exported as Markdown.
+const TITLE_STOP = new Set(['the', 'and', 'for', 'with', 'this', 'that', 'are', 'from', 'into', 'your', 'our',
+  'out', 'off', 'via', 'add', 'use', 'get', 'set', 'new', 'can', 'but', 'not', 'you', 'was', 'were', 'has',
+  'have', 'had', 'will', 'should', 'what', 'when', 'why', 'how', 'its', 'all', 'any', 'per', 'now', 'one']);
+function titleWords(s) {
+  return String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !TITLE_STOP.has(w));
+}
+// Pick a human title for a session: the AI title if present, else the first
+// prompt — but skip local-command wrappers / system blocks (e.g. "<command-name>",
+// "<local-command-caveat>"), which aren't meaningful work descriptions.
+function sessionTitle(s) {
+  if (s.title) return s.title;
+  const fp = String(s.firstPrompt || '').trim();
+  if (!fp || fp[0] === '<' || /<\/?(command-|local-command|system-reminder)/.test(fp)) return '(untitled)';
+  return fp.slice(0, 80);
+}
+function topThemes(counts, n) {
+  return Object.entries(counts || {})
+    .filter(([, c]) => c >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n || 6)
+    .map(([term, count]) => ({ term, count }));
+}
+function buildWorkLog(v) {
+  const all = (v.projects || []).filter((p) => (p.cost || 0) > 0 || p.commits || p.filesEdited);
+  return {
+    from: v.from || null,
+    to: v.to || null,
+    cost: v.cost || 0,
+    activeMs: v.time ? v.time.totalMs : 0,
+    sessions: v.sessions || 0,
+    projectCount: all.length,
+    commits: (v.output && v.output.commits) || 0,
+    prs: (v.output && v.output.prs) || 0,
+    filesEdited: (v.output && v.output.filesEdited) || 0,
+    themes: v.themes || [],
+    projects: all.slice()
+      .sort((a, b) => (b.commits || 0) - (a.commits || 0) || b.cost - a.cost)
+      .slice(0, 12)
+      .map((p) => ({ name: p.name, commits: p.commits || 0, prs: p.prs || 0, filesEdited: p.filesEdited || 0, sessions: p.sessions, cost: p.cost, titles: (p.topTitles || []).slice(0, 3) })),
+  };
+}
+function worklogMarkdown(wl) {
+  if (!wl) return '';
+  const usd = (x) => `$${(x || 0).toFixed(2)}`;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const range = wl.from || wl.to ? `${wl.from || '…'} → ${wl.to || '…'}` : 'all time';
+  const head = [plural(wl.commits, 'commit'), wl.prs ? plural(wl.prs, 'PR') : null, plural(wl.filesEdited, 'file'),
+    plural(wl.sessions, 'session'), usd(wl.cost), wl.activeMs > 0 ? `${(wl.activeMs / 3600000).toFixed(1)}h active` : null].filter(Boolean).join(' · ');
+  const lines = [`# Work log — ${range}`, '', `**${head}** across ${plural(wl.projectCount, 'project')}.`];
+  if (wl.themes.length) lines.push('', `Recurring themes: ${wl.themes.map((t) => `${t.term} ×${t.count}`).join(', ')}.`);
+  if (wl.projects.length) {
+    lines.push('', '## By project', '');
+    for (const p of wl.projects) {
+      const bits = [plural(p.commits, 'commit'), p.prs ? plural(p.prs, 'PR') : null, plural(p.filesEdited, 'file'),
+        plural(p.sessions, 'session'), usd(p.cost)].filter(Boolean).join(', ');
+      lines.push(`- **${clean(p.name)}** — ${bits}`);
+      for (const t of p.titles) lines.push(`  - ${clean(t)}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
 // --- Activity punchcard -----------------------------------------------------
 // A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
 // classic punchcard, but priced. Built from in-range days only; cost is computed
@@ -1116,6 +1183,7 @@ function overview(from, to) {
   let prs = 0;
   let edits = 0;
   const editsByFile = {};
+  const themeWords = {}; // word frequency across session titles, for work-log themes
   let sessionCount = 0;
   let projectCount = 0;
   let dataStart = null;
@@ -1148,6 +1216,10 @@ function overview(from, to) {
     let cwd = null;
     let lastActive = null;
     let active = false;
+    let pCommits = 0;
+    let pPrs = 0;
+    const pEditsByFile = {};
+    const pTitles = []; // { title, cost } — work-log highlights for this project
 
     for (const s of items) {
       if (s.cwd && !cwd) cwd = s.cwd;
@@ -1203,6 +1275,13 @@ function overview(from, to) {
       edits += agg.edits;
       for (const [n, c] of Object.entries(agg.editsByFile)) editsByFile[n] = (editsByFile[n] || 0) + c;
       sessionCount += 1;
+      // Per-project output + work-log highlights (titles + recurring words).
+      pCommits += agg.commits;
+      pPrs += agg.prs;
+      for (const [n, c] of Object.entries(agg.editsByFile)) pEditsByFile[n] = (pEditsByFile[n] || 0) + c;
+      const wlTitle = sessionTitle(s);
+      pTitles.push({ title: wlTitle, cost: priceBundles(agg.byFamily).cost });
+      if (wlTitle !== '(untitled)') for (const w of titleWords(wlTitle)) themeWords[w] = (themeWords[w] || 0) + 1;
 
       for (const [day, d] of Object.entries(s.days)) {
         if (!inRange(day, from, to)) continue;
@@ -1234,6 +1313,10 @@ function overview(from, to) {
       cacheSavings: priced.cacheSavings,
       turnMs: pTurnMs,
       lastActive,
+      commits: pCommits,
+      prs: pPrs,
+      filesEdited: Object.keys(pEditsByFile).length,
+      topTitles: pTitles.sort((a, b) => b.cost - a.cost).slice(0, 3).map((t) => t.title),
       costPrev: prevCost,
       costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
     });
@@ -1321,6 +1404,7 @@ function overview(from, to) {
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
     output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
     insights: computeInsights({ totals: { cost: totals.cost }, daily, projects, delta, time: timeStats(durations, userPrompts, totals.cost), reliability: reliabilityStats(tools, toolErrors, errorFollowup), topModels: pricedModels(byModel), topEntrypoints: priceByName(byEntry) }),
+    worklog: buildWorkLog({ from, to, cost: totals.cost, sessions: sessionCount, output: outputStats({ commits, prs, edits, editsByFile }, totals.cost), time: timeStats(durations, userPrompts, totals.cost), projects, themes: topThemes(themeWords, 6) }),
   };
 }
 
@@ -1645,6 +1729,11 @@ const server = http.createServer((req, res) => {
       if (!ov) return sendJSON(res, 404, { error: 'no projects' });
       return sendJSON(res, 200, ov);
     }
+    if (pathname === '/api/worklog.md') {
+      const ov = overview(from, to);
+      res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': 'attachment; filename="claude-ledger-worklog.md"', 'Cache-Control': 'no-store' });
+      return res.end(ov ? worklogMarkdown(ov.worklog) : '');
+    }
     if (pathname === '/api/overview.csv') {
       const ov = overview(from, to);
       if (!ov) return sendCSV(res, 'claude-ledger.csv', '');
@@ -1742,6 +1831,11 @@ module.exports = {
   outputStats,
   computeInsights,
   promMetrics,
+  buildWorkLog,
+  worklogMarkdown,
+  topThemes,
+  titleWords,
+  sessionTitle,
   isCommitCommand,
   isPrCommand,
   emptyPunchGrid,

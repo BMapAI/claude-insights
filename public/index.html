@@ -98,6 +98,12 @@
   .insight-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; }
   .insight-title { font-weight: 600; font-size: 13px; }
   .insight-detail { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+  .wl-headline { font-size: 15px; font-weight: 600; }
+  .wl-meta { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .wl-projects { margin-top: 14px; display: grid; gap: 10px; }
+  .wl-proj { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 13px; }
+  .wl-titles { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+  .wl-titles li { margin: 2px 0; }
 
   .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
   .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
@@ -642,6 +648,26 @@ function insightsSection(items) {
     </div>`).join('');
   return `<div class="section insights"><h3>⚡ Worth a look</h3><div class="insight-list">${cards}</div></div>`;
 }
+// "What you built" — the accomplishment summary for the range: headline counts,
+// recurring title words, a per-project breakdown, and a Markdown export.
+function worklogSection(wl) {
+  if (!wl || (!wl.commits && !wl.filesEdited && !(wl.projects && wl.projects.length))) return '';
+  const hrs = wl.activeMs > 0 ? ` · ${fmtMs(wl.activeMs)} active` : '';
+  const head = `${fmtNum(wl.commits)} commit${wl.commits === 1 ? '' : 's'}${wl.prs ? ` · ${fmtNum(wl.prs)} PR${wl.prs === 1 ? '' : 's'}` : ''} · ${fmtNum(wl.filesEdited)} files · ${fmtNum(wl.sessions)} sessions · ${fmtUSD(wl.cost)}${hrs}`;
+  const themes = wl.themes && wl.themes.length
+    ? `<div class="tools" style="margin-top:12px">${wl.themes.map((t) => `<span class="chip">${esc(t.term)}<b>×${t.count}</b></span>`).join('')}</div>` : '';
+  const rows = (wl.projects || []).map((p) => `
+    <div class="wl-proj">
+      <div><b>${esc(p.name)}</b> <span class="wl-meta">${fmtNum(p.commits)} commits · ${fmtNum(p.filesEdited)} files · ${fmtNum(p.sessions)} sessions · ${fmtUSD(p.cost)}</span></div>
+      ${p.titles && p.titles.length ? `<ul class="wl-titles">${p.titles.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+    </div>`).join('');
+  return `<div class="section"><h3>What you built <a class="csvlink" href="/api/worklog.md${qs()}">⤓ Markdown</a></h3>
+    <div class="wl-headline">${head} <span class="wl-meta">across ${fmtNum(wl.projectCount)} project${wl.projectCount === 1 ? '' : 's'}</span></div>
+    ${themes}
+    <div class="wl-projects">${rows}</div>
+    <div class="hint" style="margin-top:10px">What the spend produced — from <code>git</code>/file activity and session titles. An honest activity log, not a value judgment; export it for a standup or review.</div>
+  </div>`;
+}
 // Output / ROI: what the spend produced (commits, PRs, files touched) and the
 // cost per unit. A rough activity proxy, framed honestly — not a value judgment.
 function outputSection(o, cost) {
@@ -902,6 +928,7 @@ function renderOverview(d, opts) {
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
+    ${worklogSection(d.worklog)}
     <div class="section">
       <h3>Projects by spend (${d.projects.length}) <a class="csvlink" href="/api/overview.csv${qs()}">⤓ CSV</a></h3>
       <table>

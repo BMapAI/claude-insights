@@ -23,6 +23,10 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   (it points; it doesn't prescribe), ranked by dollar impact, and shown only when
   something genuinely stands out — so the dashboard leads with signal instead of
   fifteen equally-weighted panels.
+- **"What you built" work log** — the accomplishment side of ROI: a per-range
+  summary of commits, PRs, files, the sessions worked on, and recurring title
+  words, with a one-click **Markdown export** (`/api/worklog.md`) for a standup or
+  review. An honest activity log from git/file activity — not a value judgment.
 - **Per-project overview** — total cost, sessions, prompts, cost/prompt, tool calls,
   token usage, cache savings, spend-by-model split, daily-spend chart, top tools, and a
   sortable per-session table.
