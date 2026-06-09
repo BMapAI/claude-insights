@@ -205,6 +205,14 @@ function modelFamily(model) {
   return 'opus'; // sensible default for unknown Claude models
 }
 
+// True when the model id maps to a known pricing family. Unknown ids are still
+// priced (as Opus — the safe over-estimate), but flagged so the UI can say so
+// rather than silently inflating cost when a new model id appears.
+function modelFamilyKnown(model) {
+  const m = (model || '').toLowerCase();
+  return m.includes('opus') || m.includes('sonnet') || m.includes('haiku');
+}
+
 function emptyBundle() {
   return { input: 0, output: 0, cacheRead: 0, cw5: 0, cw1: 0, cwOther: 0 };
 }
@@ -294,6 +302,13 @@ function priceByName(byName) {
       return { name, cost: p.cost, tokens: tk.input + tk.output + tk.cacheRead + tk.cacheWrite };
     })
     .sort((a, b) => b.cost - a.cost);
+}
+
+// Like priceByName, but for exact model ids: flags any id that fell back to Opus
+// pricing because it matched no known family, so an unknown/new model is visible
+// in the UI instead of silently priced as the most expensive family.
+function pricedModels(map) {
+  return priceByName(map).map((m) => ({ ...m, unknown: !modelFamilyKnown(m.name) }));
 }
 
 // Efficiency ratios + cost composition + what-if repricing, from a { family: bundle } map.
@@ -793,7 +808,7 @@ function projectDetail(folder, from, to) {
     daily,
     punchcard: pricePunchcard(punch),
     topTools,
-    topModels: priceByName(byModel),
+    topModels: pricedModels(byModel),
     topEntrypoints: priceByName(byEntry),
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
@@ -995,7 +1010,7 @@ function overview(from, to) {
     daily,
     punchcard: pricePunchcard(punch),
     topTools,
-    topModels: priceByName(byModel),
+    topModels: pricedModels(byModel),
     topEntrypoints: priceByName(byEntry),
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
@@ -1202,7 +1217,7 @@ function sessionDetail(folder, sessionId) {
     topTools: Object.entries(out.tools)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count),
-    topModels: priceByName(byModel),
+    topModels: pricedModels(byModel),
     topEntrypoints: priceByName(byEntry),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     time: timeStats(durations, out.prompts.length, priced.cost),
@@ -1218,6 +1233,31 @@ function sendJSON(res, code, obj) {
     'Cache-Control': 'no-store',
   });
   res.end(body);
+}
+
+// --- CSV export -------------------------------------------------------------
+// Minimal RFC-4180-ish serializer: quote a cell only when it contains a comma,
+// quote, or newline, and double any embedded quotes — so a project title with a
+// comma can't shift columns. columns: [{ label, key? , value?(row) }].
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function toCSV(rows, columns) {
+  const head = columns.map((c) => csvCell(c.label)).join(',');
+  const lines = (rows || []).map((r) =>
+    columns.map((c) => csvCell(typeof c.value === 'function' ? c.value(r) : r[c.key])).join(','));
+  return [head, ...lines].join('\n') + '\n';
+}
+function sendCSV(res, filename, text) {
+  const safe = String(filename).replace(/[^A-Za-z0-9._-]+/g, '-');
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${safe}"`,
+    'Cache-Control': 'no-store',
+  });
+  res.end(text);
 }
 
 function sendFile(res, file) {
@@ -1261,6 +1301,20 @@ const server = http.createServer((req, res) => {
       if (!ov) return sendJSON(res, 404, { error: 'no projects' });
       return sendJSON(res, 200, ov);
     }
+    if (pathname === '/api/overview.csv') {
+      const ov = overview(from, to);
+      if (!ov) return sendCSV(res, 'claude-ledger.csv', '');
+      return sendCSV(res, 'claude-ledger-projects.csv', toCSV(ov.projects, [
+        { label: 'Project', value: (p) => p.name },
+        { label: 'Path', value: (p) => p.cwd },
+        { label: 'Cost (USD)', value: (p) => p.cost.toFixed(4) },
+        { label: 'Sessions', key: 'sessions' },
+        { label: 'Prompts', key: 'userPrompts' },
+        { label: 'Cache saved (USD)', value: (p) => p.cacheSavings.toFixed(4) },
+        { label: 'Active time (ms)', value: (p) => Math.round(p.turnMs || 0) },
+        { label: 'Last active', value: (p) => p.lastActive || '' },
+      ]));
+    }
     if (pathname.startsWith('/api/session/')) {
       const rest = pathname.slice('/api/session/'.length);
       const slash = rest.indexOf('/');
@@ -1270,6 +1324,20 @@ const server = http.createServer((req, res) => {
       const detail = sessionDetail(projectId, sessionId);
       if (!detail) return sendJSON(res, 404, { error: 'session not found' });
       return sendJSON(res, 200, detail);
+    }
+    if (pathname.startsWith('/api/project/') && pathname.endsWith('.csv')) {
+      const id = pathname.slice('/api/project/'.length, -'.csv'.length);
+      const detail = projectDetail(id, from, to);
+      if (!detail) return sendJSON(res, 404, { error: 'project not found' });
+      return sendCSV(res, `claude-ledger-${detail.name}-sessions.csv`, toCSV(detail.sessions, [
+        { label: 'Title', value: (s) => s.title },
+        { label: 'Prompts', key: 'userPrompts' },
+        { label: 'Tools', key: 'toolUses' },
+        { label: 'Tokens', value: (s) => s.tokens.input + s.tokens.output + s.tokens.cacheRead + s.tokens.cacheWrite },
+        { label: 'Cost (USD)', value: (s) => s.cost.toFixed(4) },
+        { label: 'Start', value: (s) => s.start || '' },
+        { label: 'End', value: (s) => s.end || '' },
+      ]));
     }
     if (pathname.startsWith('/api/project/')) {
       const id = pathname.slice('/api/project/'.length);
@@ -1307,6 +1375,7 @@ module.exports = {
   previousPeriod,
   makeDelta,
   modelFamily,
+  modelFamilyKnown,
   emptyBundle,
   addBundle,
   famBundleIn,
@@ -1315,6 +1384,7 @@ module.exports = {
   mergeByName,
   priceBundles,
   priceByName,
+  pricedModels,
   efficiencyStats,
   reliabilityStats,
   timeStats,
@@ -1323,6 +1393,8 @@ module.exports = {
   pricePunchcard,
   inRange,
   aggregateSession,
+  toCSV,
+  csvCell,
 };
 
 if (require.main !== module) return;

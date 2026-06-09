@@ -89,6 +89,8 @@
 
   .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
   .section h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  .csvlink { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--accent-2); margin-left: 10px; }
+  .badge { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; vertical-align: middle; }
 
   .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
   .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
@@ -513,7 +515,7 @@ function modelVersions(models) {
   if (total <= 0) return '';
   const fam = (id) => id.includes('opus') ? 'opus' : id.includes('sonnet') ? 'sonnet' : id.includes('haiku') ? 'haiku' : '';
   const rows = models.map((m) =>
-    `<span class="item"><span class="dot" style="background:${MODEL_COLORS[fam(m.name)] || '#888'}"></span>${esc(m.name)} — ${fmtUSD(m.cost)} (${(m.cost / total * 100).toFixed(0)}%)</span>`).join('');
+    `<span class="item"><span class="dot" style="background:${MODEL_COLORS[fam(m.name)] || '#888'}"></span>${esc(m.name)} — ${fmtUSD(m.cost)} (${(m.cost / total * 100).toFixed(0)}%)${m.unknown ? '<span class="badge" title="Unknown model id — priced at Opus rates">priced as Opus</span>' : ''}</span>`).join('');
   return `<div class="legend" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">${rows}</div>`;
 }
 // Interactive (CLI) vs automated (SDK) spend. Only shown when >1 entrypoint is
@@ -812,7 +814,7 @@ function renderOverview(d, opts) {
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
     <div class="section">
-      <h3>Projects by spend (${d.projects.length})</h3>
+      <h3>Projects by spend (${d.projects.length}) <a class="csvlink" href="/api/overview.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="lead-head">
           ${LEAD_COLS.map((c) => { if (c.trend && !d.delta) return ''; const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}"${s ? ` data-key="${c.key}"` : ''}>${c.label}${s ? '<span class="arrow"></span>' : ''}</th>`; }).join('')}
@@ -859,7 +861,7 @@ function renderDetail(d, opts) {
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
     <div class="section">
-      <h3>Sessions (${d.sessions.length}) — click a row for details</h3>
+      <h3>Sessions (${d.sessions.length}) — click a row for details <a class="csvlink" href="/api/project/${encodeURIComponent(d.id)}.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="sess-head">
           ${SESS_COLS.map((c) => `<th class="sortable${c.num ? ' num' : ''}" data-key="${c.key}">${c.label}<span class="arrow"></span></th>`).join('')}
