@@ -366,6 +366,39 @@ function reliabilityStats(tools, toolErrors, errorFollowup) {
   };
 }
 
+// Turn-latency / time-cost summary from a flat list of turn durations (ms).
+// avg is skewed by the long tail, so we also report median + p90, plus $/hour
+// and a duration histogram showing where the waiting goes.
+const DURATION_BUCKETS = [
+  [0, 10000, '<10s'],
+  [10000, 30000, '10–30s'],
+  [30000, 60000, '30–60s'],
+  [60000, 180000, '1–3m'],
+  [180000, 600000, '3–10m'],
+  [600000, Infinity, '>10m'],
+];
+function timeStats(durations, userPrompts, cost) {
+  const arr = (durations || []).slice().sort((a, b) => a - b);
+  const turns = arr.length;
+  const totalMs = arr.reduce((s, x) => s + x, 0);
+  const quantile = (p) => (turns ? arr[Math.min(turns - 1, Math.floor(p * turns))] : 0);
+  const hours = totalMs / 3600000;
+  const hist = DURATION_BUCKETS.map(([lo, hi, label]) => ({
+    label,
+    count: arr.reduce((n, x) => n + (x >= lo && x < hi ? 1 : 0), 0),
+  }));
+  return {
+    turns,
+    totalMs,
+    avgMs: turns ? totalMs / turns : 0,
+    medianMs: quantile(0.5),
+    p90Ms: quantile(0.9),
+    perPromptMs: userPrompts > 0 ? totalMs / userPrompts : 0,
+    costPerHour: hours > 0 ? cost / hours : 0,
+    hist,
+  };
+}
+
 // --- Activity punchcard -----------------------------------------------------
 // A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
 // classic punchcard, but priced. Built from in-range days only; cost is computed
@@ -440,10 +473,13 @@ function parseSession(filePath) {
       // byModel: { exactModelId -> { family -> bundle } } for the precise model mix.
       // byEntry: { entrypoint -> { family -> bundle } } — interactive (cli) vs
       //   automated (sdk-cli) spend.
+      // turnMs/turns/durations: wall-clock turn latency from `turn_duration`
+      //   system records (durations kept for percentiles).
       data.days[key] = {
         userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {},
         byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, byEntry: {}, hours: {},
         toolErrors: {}, errorFollowup: {},
+        turnMs: 0, turns: 0, durations: [],
       };
     }
     return data.days[key];
@@ -479,6 +515,14 @@ function parseSession(filePath) {
       if (!data.end || o.timestamp > data.end) data.end = o.timestamp;
     }
     if (o.type === 'ai-title' && o.aiTitle) data.title = o.aiTitle;
+
+    // Wall-clock turn latency (Claude Code emits one per completed turn).
+    if (o.type === 'system' && o.subtype === 'turn_duration' && typeof o.durationMs === 'number' && o.durationMs >= 0) {
+      const day = getDay(o.timestamp);
+      day.turnMs += o.durationMs;
+      day.turns += 1;
+      day.durations.push(o.durationMs);
+    }
 
     if (o.type === 'user') {
       const content = o.message && o.message.content;
@@ -628,6 +672,7 @@ function projectDetail(folder, from, to) {
   const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
   const dayMap = {}; // date -> { byFamily, messages, userPrompts }
   const punch = emptyPunchGrid(); // [weekday][hour] activity, priced at the end
+  const durations = []; // turn-latency samples (ms) in range
   const prev = previousPeriod(from, to);
   const prevGrand = {};
   let prevPrompts = 0;
@@ -687,6 +732,7 @@ function projectDetail(folder, from, to) {
         addBundle(dayMap[day].byFamily[fam], b);
       }
       accumulatePunchcard(punch, day, d);
+      if (d.durations && d.durations.length) for (const x of d.durations) durations.push(x);
       if (!dataStart || day < dataStart) dataStart = day;
       if (!dataEnd || day > dataEnd) dataEnd = day;
     }
@@ -752,6 +798,7 @@ function projectDetail(folder, from, to) {
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
     reliability: reliabilityStats(tools, toolErrors, errorFollowup),
+    time: timeStats(durations, userPrompts, totals.cost),
     sessions,
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
@@ -777,6 +824,7 @@ function overview(from, to) {
   const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
   const dayMap = {};
   const punch = emptyPunchGrid(); // [weekday][hour] activity across all projects
+  const durations = []; // turn-latency samples (ms) across all projects in range
   const monthGrand = {}; // month-to-date tokens, independent of the selected range
   const M = currentMonthInfo();
   const prev = previousPeriod(from, to); // equal-length window before [from,to]
@@ -801,6 +849,7 @@ function overview(from, to) {
     const pPrevGrand = {};
     let pSessions = 0;
     let pPrompts = 0;
+    let pTurnMs = 0;
     let cwd = null;
     let lastActive = null;
     let active = false;
@@ -868,6 +917,8 @@ function overview(from, to) {
           addBundle(dayMap[day].byFamily[fam], b);
         }
         accumulatePunchcard(punch, day, d);
+        if (d.durations && d.durations.length) { for (const x of d.durations) durations.push(x); }
+        pTurnMs += d.turnMs || 0;
         if (!dataStart || day < dataStart) dataStart = day;
         if (!dataEnd || day > dataEnd) dataEnd = day;
       }
@@ -884,6 +935,7 @@ function overview(from, to) {
       userPrompts: pPrompts,
       cost: priced.cost,
       cacheSavings: priced.cacheSavings,
+      turnMs: pTurnMs,
       lastActive,
       costPrev: prevCost,
       costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
@@ -948,6 +1000,7 @@ function overview(from, to) {
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
     reliability: reliabilityStats(tools, toolErrors, errorFollowup),
+    time: timeStats(durations, userPrompts, totals.cost),
     projects,
     budget,
     delta,
@@ -1056,6 +1109,7 @@ function sessionDetail(folder, sessionId) {
   const toolErrors = {};
   const errorFollowup = {};
   const toolNames = {};
+  const durations = [];
   let pendingError = false;
   let cumCost = 0;
 
@@ -1074,6 +1128,10 @@ function sessionDetail(folder, sessionId) {
       if (!out.end || o.timestamp > out.end) out.end = o.timestamp;
     }
     if (o.type === 'ai-title' && o.aiTitle) out.title = o.aiTitle;
+
+    if (o.type === 'system' && o.subtype === 'turn_duration' && typeof o.durationMs === 'number' && o.durationMs >= 0) {
+      durations.push(o.durationMs);
+    }
 
     if (o.type === 'user') {
       const content = o.message && o.message.content;
@@ -1147,6 +1205,7 @@ function sessionDetail(folder, sessionId) {
     topModels: priceByName(byModel),
     topEntrypoints: priceByName(byEntry),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
+    time: timeStats(durations, out.prompts.length, priced.cost),
     timeline: out.timeline,
   };
 }
@@ -1258,6 +1317,7 @@ module.exports = {
   priceByName,
   efficiencyStats,
   reliabilityStats,
+  timeStats,
   emptyPunchGrid,
   accumulatePunchcard,
   pricePunchcard,

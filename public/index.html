@@ -232,6 +232,13 @@ function relTime(ts) {
   if (diff < 30 * day) return Math.round(diff / day) + 'd ago';
   return fmtDate(ts);
 }
+function fmtMs(ms) {
+  ms = ms || 0;
+  if (ms >= 3600000) return (ms / 3600000).toFixed(1) + 'h';
+  if (ms >= 60000) return (ms / 60000).toFixed(1) + 'm';
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+  return Math.round(ms) + 'ms';
+}
 function fmtDuration(start, end) {
   if (!start || !end) return '—';
   const ms = new Date(end).getTime() - new Date(start).getTime();
@@ -346,6 +353,7 @@ const LEAD_COLS = [
   { key: 'sessions', label: 'Sessions', num: true },
   { key: 'userPrompts', label: 'Prompts', num: true },
   { key: 'cacheSavings', label: 'Cache saved', num: true },
+  { key: 'turnMs', label: 'Active time', num: true },
   { key: 'lastActive', label: 'Last active', num: true },
 ];
 let leadData = [];
@@ -378,6 +386,7 @@ function renderLeaderboard() {
       <td class="num">${fmtNum(p.sessions)}</td>
       <td class="num">${fmtNum(p.userPrompts)}</td>
       <td class="num good">${fmtUSD(p.cacheSavings)}</td>
+      <td class="num">${fmtMs(p.turnMs)}</td>
       <td class="num">${relTime(p.lastActive)}</td>
     </tr>`).join('');
   body.querySelectorAll('.row-link').forEach((node) =>
@@ -525,6 +534,34 @@ function entrypointSection(items) {
   return `<div class="section"><h3>Interactive vs automated</h3>
     <div class="split">${bar}</div><div class="legend">${legend}</div>
     <div class="hint" style="margin-top:10px">Spend by Claude Code entrypoint — <code>cli</code> is hands-on interactive work, <code>sdk-cli</code> is headless / SDK-driven automation.</div>
+  </div>`;
+}
+// Turn latency / time-cost: how much wall-clock time the work took, where it
+// went (duration histogram), and spend per hour of active time.
+function timeSection(t) {
+  if (!t || !t.turns) return '';
+  const maxH = Math.max.apply(null, t.hist.map((h) => h.count).concat(1));
+  const bars = t.hist.map((h) =>
+    `<div class="bar-wrap" title="${esc(h.label)} — ${fmtNum(h.count)} turns">
+       <div class="bar" style="height:${(h.count / maxH * 120).toFixed(1)}px;background:var(--accent-2)"></div>
+     </div>`).join('');
+  const labels = t.hist.map((h) => `<span>${esc(h.label)}</span>`).join('');
+  return `<div class="section">
+    <h3>Time &amp; latency</h3>
+    <div class="effgrid">
+      <div class="eff"><div class="label">Active time</div><div class="value">${fmtMs(t.totalMs)}</div></div>
+      <div class="eff"><div class="label">Turns</div><div class="value">${fmtNum(t.turns)}</div></div>
+      <div class="eff"><div class="label">Median turn</div><div class="value">${fmtMs(t.medianMs)}</div></div>
+      <div class="eff"><div class="label">p90 turn</div><div class="value">${fmtMs(t.p90Ms)}</div></div>
+      <div class="eff"><div class="label">Spend / hour</div><div class="value cost">${fmtUSD(t.costPerHour)}</div></div>
+      <div class="eff"><div class="label">Time / prompt</div><div class="value">${fmtMs(t.perPromptMs)}</div></div>
+    </div>
+    <div style="margin-top:18px">
+      <div class="label" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">Turn duration distribution</div>
+      <div class="chart" style="height:130px">${bars}</div>
+      <div class="chart-x" style="justify-content:space-around">${labels}</div>
+    </div>
+    <div class="hint" style="margin-top:12px">Wall-clock duration of each turn (your prompt → the end of Claude's response, including tool execution), from Claude Code's <code>turn_duration</code> records. Median is more representative than the long-tailed average.</div>
   </div>`;
 }
 // Tool reliability: error rate, recovery spend, and a per-tool error breakdown.
@@ -766,6 +803,7 @@ function renderOverview(d, opts) {
     </div>
     ${efficiencySection(d.efficiency)}
     ${reliabilitySection(d.reliability, t.cost)}
+    ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
@@ -812,6 +850,7 @@ function renderDetail(d, opts) {
     </div>
     ${efficiencySection(d.efficiency)}
     ${reliabilitySection(d.reliability, t.cost)}
+    ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
@@ -864,6 +903,7 @@ function renderSession(d) {
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}
+    ${timeSection(d.time)}
     <div class="section">
       <h3>Prompts (${d.prompts.length})</h3>
       ${d.prompts.length ? d.prompts.map((p, i) => `<div class="prompt"><div class="when">#${i + 1} · ${fmtDateTime(p.ts)}</div><div class="text">${esc(p.text)}</div></div>`).join('') : '<div class="loading">No user prompts recorded.</div>'}

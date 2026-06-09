@@ -119,6 +119,37 @@ test('reliabilityStats is all-zero / empty for clean input', () => {
   assert.deepEqual(r.byTool, []);
 });
 
+test('timeStats computes totals, median/p90, $/hour, and the histogram', () => {
+  const durations = [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000];
+  const cost = 36.67;
+  const t = L.timeStats(durations, 5, cost);
+  assert.equal(t.turns, 10);
+  assert.equal(t.totalMs, 550000);
+  assert.equal(t.avgMs, 55000);
+  assert.equal(t.medianMs, 60000); // arr[floor(0.5*10)] = arr[5]
+  assert.equal(t.p90Ms, 100000); // arr[floor(0.9*10)] = arr[9]
+  assert.equal(t.perPromptMs, 110000); // 550000 / 5 prompts
+  assert.ok(Math.abs(t.costPerHour - cost / (550000 / 3600000)) < 1e-9);
+
+  const byLabel = Object.fromEntries(t.hist.map((h) => [h.label, h.count]));
+  assert.equal(byLabel['<10s'], 0); // 10000 is not < 10000
+  assert.equal(byLabel['10–30s'], 2);
+  assert.equal(byLabel['30–60s'], 3);
+  assert.equal(byLabel['1–3m'], 5);
+  assert.equal(t.hist.reduce((s, h) => s + h.count, 0), 10);
+});
+
+test('timeStats is zeroed for empty input', () => {
+  const t = L.timeStats([], 0, 0);
+  assert.equal(t.turns, 0);
+  assert.equal(t.totalMs, 0);
+  assert.equal(t.avgMs, 0);
+  assert.equal(t.medianMs, 0);
+  assert.equal(t.p90Ms, 0);
+  assert.equal(t.costPerHour, 0);
+  assert.equal(t.hist.reduce((s, h) => s + h.count, 0), 0);
+});
+
 test('aggregateSession rolls up byEntry / byModel / toolErrors / errorFollowup across days', () => {
   const bundle = (o) => ({ ...L.emptyBundle(), ...o });
   const session = {

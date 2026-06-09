@@ -55,6 +55,10 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   hands-on interactive work vs `sdk-cli` = headless / SDK-driven automation), so you
   can see how much cost comes from automation rather than you at the keyboard. Shown
   when more than one entrypoint is present.
+- **Time & latency** — wall-clock time alongside dollar-cost, from Claude Code's
+  `turn_duration` records: total active time, turn count, median and p90 turn duration
+  (median, since the tail is long), spend per hour of active time, time per prompt, and
+  a turn-duration histogram. The projects leaderboard also gets an "active time" column.
 - **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
@@ -183,10 +187,10 @@ configured number of days.
   Parsed sessions are cached by file mtime + size, so only the first scan is slow.
   `/api/overview` and `/api/project/:id` also return a `punchcard` (a priced 7×24
   weekday×hour grid), per-model daily costs, exact-model spend (`topModels`),
-  per-entrypoint spend (`topEntrypoints`), and a `reliability` summary (tool error
-  rates + recovery spend). Endpoints: `/api/projects`, `/api/overview`,
-  `/api/project/:id`, `/api/session/:project/:id` (all accept
-  `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
+  per-entrypoint spend (`topEntrypoints`), a `reliability` summary (tool error rates +
+  recovery spend), and a `time` summary (turn-latency stats + histogram). Endpoints:
+  `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
+  (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
 
 ## License
