@@ -592,6 +592,40 @@ function reliabilitySection(r, totalCost) {
     <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
   </div>`;
 }
+// Output / ROI: what the spend produced (commits, PRs, files touched) and the
+// cost per unit. A rough activity proxy, framed honestly — not a value judgment.
+function outputSection(o, cost) {
+  if (!o || (!o.commits && !o.filesEdited && !o.edits && !o.prs)) return '';
+  const tiles = [
+    ['Commits', fmtNum(o.commits), ''],
+    ['Files edited', fmtNum(o.filesEdited), ''],
+    ['Edits', fmtNum(o.edits), ''],
+  ];
+  if (o.prs) tiles.push(['PRs opened', fmtNum(o.prs), '']);
+  if (o.commits) tiles.push(['$ / commit', fmtUSD(o.costPerCommit), 'cost']);
+  if (o.filesEdited) tiles.push(['$ / file', fmtUSD(o.costPerFile), 'cost']);
+  const cells = tiles.map(([k, v, c]) => `<div class="eff"><div class="label">${k}</div><div class="value ${c}">${v}</div></div>`).join('');
+  return `<div class="section"><h3>Output — what the spend produced</h3>
+    <div class="effgrid">${cells}</div>
+    <div class="hint" style="margin-top:12px">Output produced during the spend: <code>git commit</code> / <code>gh pr create</code> calls and files touched by Edit/Write, counted from tool calls. A rough activity proxy — not a measure of value or quality.</div>
+  </div>`;
+}
+// Plan value: for flat-fee users, API-equivalent usage expressed as leverage
+// over the monthly subscription fee. Overview-only (it's an account-level view).
+function planSection(p) {
+  if (!p) return '';
+  const monthLabel = new Date(p.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const lev = (x) => x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(1)) + '×';
+  return `<div class="section"><h3>Plan value — ${esc(monthLabel)}</h3>
+    <div class="effgrid">
+      <div class="eff"><div class="label">API-equivalent (MTD)</div><div class="value cost">${fmtUSD(p.mtdApiEquiv)}</div></div>
+      <div class="eff"><div class="label">Your plan</div><div class="value">${fmtUSD(p.monthlyFee)}<span class="u">/mo</span></div></div>
+      <div class="eff"><div class="label">Leverage</div><div class="value good">${lev(p.leverage)}</div></div>
+      <div class="eff"><div class="label">Projected leverage</div><div class="value good">${lev(p.projectedLeverage)}</div></div>
+    </div>
+    <div class="hint" style="margin-top:12px">Your usage priced at API list rates vs your flat subscription. <b>Leverage</b> = API-equivalent usage ÷ plan fee — roughly how much metered API the same work would have cost. Not your actual bill.</div>
+  </div>`;
+}
 function budgetSection(b) {
   if (!b) return '';
   const monthLabel = new Date(b.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -793,6 +827,8 @@ function renderOverview(d, opts) {
       <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
     </div>
     ${budgetSection(d.budget)}
+    ${planSection(d.plan)}
+    ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', 'in selected range')}</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
@@ -840,6 +876,7 @@ function renderDetail(d, opts) {
       <h2>${esc(d.name)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
+    ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', `${fmtDate(t.start)} → ${fmtDate(t.end)}`)}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
@@ -892,6 +929,7 @@ function renderSession(d) {
       <h2>${esc(d.title)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
+    ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(d.start)}</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">human turns</div></div>

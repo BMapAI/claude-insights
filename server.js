@@ -132,6 +132,25 @@ function getMonthlyBudget() {
   }
 }
 
+// Flat monthly plan fee (USD): PLAN_MONTHLY_FEE env wins, else config.json's
+// planMonthlyFee. null = no plan set (the plan-value panel stays hidden). For
+// Max/Pro users the priced cost is API-equivalent usage, not a bill; this anchors it.
+function getPlanFee() {
+  const env = process.env.PLAN_MONTHLY_FEE;
+  if (env != null && env !== '') {
+    const n = Number(env);
+    return isFinite(n) && n >= 0 ? n : null;
+  }
+  try {
+    const c = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (c.planMonthlyFee == null) return null;
+    const n = Number(c.planMonthlyFee);
+    return isFinite(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 // Current calendar month bounds for budget/projection. Computed in UTC so the
 // month window and "today" align with the day-keys, which come from slicing the
 // transcripts' ISO-Z (UTC) timestamps (see dayOf). Using local time here would
@@ -414,6 +433,38 @@ function timeStats(durations, userPrompts, cost) {
   };
 }
 
+// --- Output metrics (the "R" in ROI) ----------------------------------------
+// What the spend produced, tallied from tool_use blocks: files touched by an
+// editing tool, git commits, and PRs opened. A rough activity proxy — not a
+// measure of value or quality — so cost can be expressed per unit of work.
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
+function isCommitCommand(cmd) { return typeof cmd === 'string' && /\bgit\s+commit\b/.test(cmd); }
+function isPrCommand(cmd) { return typeof cmd === 'string' && /\bgh\s+pr\s+create\b/.test(cmd); }
+function recordOutput(day, name, input) {
+  const inp = input || {};
+  if (EDIT_TOOLS.has(name)) {
+    day.edits += 1;
+    const fp = inp.file_path || inp.notebook_path;
+    if (fp) day.editsByFile[fp] = (day.editsByFile[fp] || 0) + 1;
+  } else if (name === 'Bash') {
+    if (isCommitCommand(inp.command)) day.commits += 1;
+    if (isPrCommand(inp.command)) day.prs += 1;
+  }
+}
+// Summarize accumulated output counts + the distinct-file map into per-cost ratios.
+function outputStats(o, cost) {
+  const filesEdited = Object.keys((o && o.editsByFile) || {}).length;
+  const commits = (o && o.commits) || 0;
+  return {
+    commits,
+    prs: (o && o.prs) || 0,
+    edits: (o && o.edits) || 0,
+    filesEdited,
+    costPerCommit: commits > 0 ? cost / commits : 0,
+    costPerFile: filesEdited > 0 ? cost / filesEdited : 0,
+  };
+}
+
 // --- Activity punchcard -----------------------------------------------------
 // A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
 // classic punchcard, but priced. Built from in-range days only; cost is computed
@@ -495,6 +546,10 @@ function parseSession(filePath) {
         byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, byEntry: {}, hours: {},
         toolErrors: {}, errorFollowup: {},
         turnMs: 0, turns: 0, durations: [],
+        // Output metrics (the "R" in ROI): git commits, PRs opened, and files
+        // touched by Edit/Write. editsByFile keys give the distinct-file count
+        // when days are unioned across a date range.
+        commits: 0, prs: 0, edits: 0, editsByFile: {},
       };
     }
     return data.days[key];
@@ -572,6 +627,7 @@ function parseSession(filePath) {
             const name = b.name || 'unknown';
             day.tools[name] = (day.tools[name] || 0) + 1;
             if (b.id) toolNames[b.id] = name; // for later tool_result matching
+            recordOutput(day, name, b.input); // commits / PRs / files touched
           }
         }
       }
@@ -648,9 +704,13 @@ function aggregateSession(s, from, to) {
   const tools = {};
   const toolErrors = {};
   const errorFollowup = {};
+  const editsByFile = {};
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
+  let commits = 0;
+  let prs = 0;
+  let edits = 0;
   let has = false;
   for (const [day, d] of Object.entries(s.days)) {
     if (!inRange(day, from, to)) continue;
@@ -658,7 +718,11 @@ function aggregateSession(s, from, to) {
     userPrompts += d.userPrompts;
     assistantMessages += d.assistantMessages;
     toolUses += d.toolUses;
+    commits += d.commits || 0;
+    prs += d.prs || 0;
+    edits += d.edits || 0;
     for (const [n, c] of Object.entries(d.tools)) tools[n] = (tools[n] || 0) + c;
+    for (const [n, c] of Object.entries(d.editsByFile || {})) editsByFile[n] = (editsByFile[n] || 0) + c;
     for (const [n, c] of Object.entries(d.toolErrors || {})) toolErrors[n] = (toolErrors[n] || 0) + c;
     for (const [fam, b] of Object.entries(d.byFamily)) addBundle(famBundleIn(byFamily, fam), b);
     for (const [fam, b] of Object.entries(d.errorFollowup || {})) addBundle(famBundleIn(errorFollowup, fam), b);
@@ -667,7 +731,7 @@ function aggregateSession(s, from, to) {
     mergeByName(byModel, d.byModel || {});
     mergeByName(byEntry, d.byEntry || {});
   }
-  return { byFamily, bySkill, byMcp, byModel, byEntry, tools, toolErrors, errorFollowup, userPrompts, assistantMessages, toolUses, has };
+  return { byFamily, bySkill, byMcp, byModel, byEntry, tools, toolErrors, errorFollowup, editsByFile, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
 }
 
 // --- Project-level aggregation ---------------------------------------------
@@ -696,6 +760,10 @@ function projectDetail(folder, from, to) {
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
+  let commits = 0;
+  let prs = 0;
+  let edits = 0;
+  const editsByFile = {};
   let sessionsInRange = 0;
   let dataStart = null;
   let dataEnd = null;
@@ -724,6 +792,10 @@ function projectDetail(folder, from, to) {
     userPrompts += agg.userPrompts;
     assistantMessages += agg.assistantMessages;
     toolUses += agg.toolUses;
+    commits += agg.commits;
+    prs += agg.prs;
+    edits += agg.edits;
+    for (const [n, c] of Object.entries(agg.editsByFile)) editsByFile[n] = (editsByFile[n] || 0) + c;
     for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
     for (const [n, c] of Object.entries(agg.toolErrors)) toolErrors[n] = (toolErrors[n] || 0) + c;
     for (const [fam, b] of Object.entries(agg.byFamily)) {
@@ -817,6 +889,7 @@ function projectDetail(folder, from, to) {
     sessions,
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
+    output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
   };
 }
 
@@ -848,6 +921,10 @@ function overview(from, to) {
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
+  let commits = 0;
+  let prs = 0;
+  let edits = 0;
+  const editsByFile = {};
   let sessionCount = 0;
   let projectCount = 0;
   let dataStart = null;
@@ -920,6 +997,10 @@ function overview(from, to) {
       userPrompts += agg.userPrompts;
       assistantMessages += agg.assistantMessages;
       toolUses += agg.toolUses;
+      commits += agg.commits;
+      prs += agg.prs;
+      edits += agg.edits;
+      for (const [n, c] of Object.entries(agg.editsByFile)) editsByFile[n] = (editsByFile[n] || 0) + c;
       sessionCount += 1;
 
       for (const [day, d] of Object.entries(s.days)) {
@@ -978,6 +1059,20 @@ function overview(from, to) {
     pctProjected: monthly ? projectedCost / monthly : null,
   };
 
+  // Plan mode: for flat-fee (Max/Pro) users the dollar figure is hypothetical
+  // API-list-price usage, not a bill. Express it as leverage over the flat fee —
+  // roughly how much metered API the same work would have cost.
+  const planFee = getPlanFee();
+  const plan = planFee != null ? {
+    monthlyFee: planFee,
+    mtdApiEquiv: monthPriced.cost,
+    projectedApiEquiv: projectedCost,
+    leverage: planFee > 0 ? monthPriced.cost / planFee : null,
+    projectedLeverage: planFee > 0 ? projectedCost / planFee : null,
+    monthStart: M.monthStart,
+    today: M.today,
+  } : null;
+
   const daily = Object.entries(dayMap)
     .map(([date, v]) => {
       const pr = priceBundles(v.byFamily);
@@ -1018,8 +1113,10 @@ function overview(from, to) {
     time: timeStats(durations, userPrompts, totals.cost),
     projects,
     budget,
+    plan,
     delta,
     efficiency: efficiencyStats(grand, userPrompts, toolUses),
+    output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
   };
 }
 
@@ -1125,6 +1222,7 @@ function sessionDetail(folder, sessionId) {
   const errorFollowup = {};
   const toolNames = {};
   const durations = [];
+  const output = { commits: 0, prs: 0, edits: 0, editsByFile: {} };
   let pendingError = false;
   let cumCost = 0;
 
@@ -1173,6 +1271,7 @@ function sessionDetail(folder, sessionId) {
             const name = b.name || 'unknown';
             out.tools[name] = (out.tools[name] || 0) + 1;
             if (b.id) toolNames[b.id] = name;
+            recordOutput(output, name, b.input);
           }
         }
       }
@@ -1221,6 +1320,7 @@ function sessionDetail(folder, sessionId) {
     topEntrypoints: priceByName(byEntry),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     time: timeStats(durations, out.prompts.length, priced.cost),
+    output: outputStats(output, priced.cost),
     timeline: out.timeline,
   };
 }
@@ -1368,6 +1468,7 @@ module.exports = {
   validatePricing,
   pricingIsFromFile,
   getMonthlyBudget,
+  getPlanFee,
   currentMonthInfo,
   shiftDay,
   weekdayOf,
@@ -1388,6 +1489,10 @@ module.exports = {
   efficiencyStats,
   reliabilityStats,
   timeStats,
+  recordOutput,
+  outputStats,
+  isCommitCommand,
+  isPrCommand,
   emptyPunchGrid,
   accumulatePunchcard,
   pricePunchcard,

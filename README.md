@@ -59,6 +59,14 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   `turn_duration` records: total active time, turn count, median and p90 turn duration
   (median, since the tail is long), spend per hour of active time, time per prompt, and
   a turn-duration histogram. The projects leaderboard also gets an "active time" column.
+- **Output / ROI** — the *return* side of the ledger: counts what the spend produced —
+  `git commit` and `gh pr create` calls and the distinct files touched by Edit/Write —
+  and derives cost-per-commit and cost-per-file. A rough activity proxy from tool calls
+  (not a measure of value or quality), shown on every view.
+- **Plan value** — for flat-fee (Max/Pro) users the dollar figure is hypothetical
+  API-list-price usage, not a bill. Set your monthly plan fee and the All-projects view
+  shows month-to-date API-equivalent usage as *leverage* over the fee (e.g. "13× your
+  subscription"), plus a projected month-end leverage.
 - **Editable pricing** — rates live in `pricing.json`, hot-reloaded on change (no
   restart). Delete the file to use built-in defaults.
 - **Accurate cost model** — uses the per-message `cache_creation` 5m/1h breakdown when
@@ -83,6 +91,7 @@ Configuration via environment variables:
 | `PRICING_FILE` | `./pricing.json` | Path to the rates file (see Pricing below) |
 | `CONFIG_FILE` | `./config.json` | Path to the settings file (budget; see below) |
 | `MONTHLY_BUDGET` | _(unset)_ | Monthly budget in USD; overrides `config.json`. Powers the "This month" bar + projection. |
+| `PLAN_MONTHLY_FEE` | _(unset)_ | Flat monthly subscription fee in USD; overrides `config.json`. Powers the "Plan value" leverage panel. |
 
 ## Team / shared-server use
 
@@ -131,6 +140,21 @@ warning). Either edit `config.json`:
 
 …or set it per instance without touching files: `MONTHLY_BUDGET=500 node server.js`
 (the env var wins). Leave it unset/`null` to just show the projection.
+
+## Plan value (subscription users)
+
+If you're on a flat-fee plan (Max/Pro), the dollar figures above are **API-equivalent
+list-price usage, not your bill**. Set your monthly fee to reframe that as leverage over
+the subscription — how much metered API the same work would have cost:
+
+```json
+{ "planMonthlyFee": 200 }
+```
+
+…or `PLAN_MONTHLY_FEE=200 node server.js`. The All-projects view then shows a **Plan
+value** panel: month-to-date API-equivalent spend, your flat fee, and how many times
+over the fee your usage represents (with a projected month-end multiple). Leave it
+unset/`null` to hide the panel.
 
 ## Pricing model
 
@@ -188,7 +212,9 @@ configured number of days.
   `/api/overview` and `/api/project/:id` also return a `punchcard` (a priced 7×24
   weekday×hour grid), per-model daily costs, exact-model spend (`topModels`),
   per-entrypoint spend (`topEntrypoints`), a `reliability` summary (tool error rates +
-  recovery spend), and a `time` summary (turn-latency stats + histogram). Endpoints:
+  recovery spend), a `time` summary (turn-latency stats + histogram), and an `output`
+  summary (commits / PRs / files touched + cost-per-unit). `/api/overview` also returns
+  a `plan` block (API-equivalent usage vs a flat fee) when one is configured. Endpoints:
   `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
   (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
