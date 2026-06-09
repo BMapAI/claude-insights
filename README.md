@@ -103,11 +103,9 @@ Local, read-only, and dependency-free.
 ## Run
 
 ```bash
-npx claude-ledger
+node server.js
 # → http://127.0.0.1:4317
 ```
-
-No install needed — `npx` runs it directly. From a clone, use `node server.js` instead.
 
 Configuration via environment variables:
 
