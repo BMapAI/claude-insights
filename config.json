@@ -1,4 +1,5 @@
 {
-  "_comment": "Optional settings, hot-reloaded on change. monthlyBudget is in USD and powers the 'This month' budget bar + burn-rate projection on the All-projects view. null = no budget (projection still shown). Override per-instance with the MONTHLY_BUDGET env var.",
-  "monthlyBudget": null
+  "_comment": "Optional settings, hot-reloaded on change. monthlyBudget (USD) powers the 'This month' budget bar + burn-rate projection; null = no budget (projection still shown); override with MONTHLY_BUDGET. planMonthlyFee (USD) is your flat Max/Pro subscription fee; when set, the All-projects view shows API-equivalent usage as leverage over the fee; null = hidden; override with PLAN_MONTHLY_FEE.",
+  "monthlyBudget": null,
+  "planMonthlyFee": null
 }
