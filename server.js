@@ -156,6 +156,22 @@ function shiftDay(dayStr, deltaDays) {
   return d.toISOString().slice(0, 10);
 }
 
+// Day-of-week for a YYYY-MM-DD key: 0=Sun … 6=Sat (UTC, to match the day-keys).
+function weekdayOf(dayStr) {
+  const wd = new Date(dayStr + 'T00:00:00Z').getUTCDay();
+  return Number.isInteger(wd) ? wd : 0;
+}
+
+// Hour-of-day (0–23) sliced straight from an ISO-Z timestamp's "HH" field. UTC,
+// to stay aligned with dayOf's day-keys (the whole app buckets in UTC on purpose).
+function hourOf(ts) {
+  if (typeof ts === 'string' && ts.length >= 13 && ts[10] === 'T') {
+    const h = Number(ts.slice(11, 13));
+    if (Number.isInteger(h) && h >= 0 && h < 24) return h;
+  }
+  return 0;
+}
+
 // The equal-length period immediately before [from, to]. Null for an unbounded range.
 function previousPeriod(from, to) {
   if (!from || !to) return null;
@@ -217,6 +233,12 @@ function usageToBundle(u) {
     b.cwOther = u.cache_creation_input_tokens || 0;
   }
   return b;
+}
+
+// Get-or-create the bundle for one model family inside a { family: bundle } map.
+function famBundleIn(map, fam) {
+  if (!map[fam]) map[fam] = emptyBundle();
+  return map[fam];
 }
 
 // Attribution maps are { name: { family: bundle } } — a token bundle per model
@@ -316,6 +338,32 @@ function efficiencyStats(grand, userPrompts, toolUses) {
   };
 }
 
+// --- Activity punchcard -----------------------------------------------------
+// A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
+// classic punchcard, but priced. Built from in-range days only; cost is computed
+// at query time (like everything else) so it tracks date filters + pricing.json.
+function emptyPunchGrid() {
+  return Array.from({ length: 7 }, () =>
+    Array.from({ length: 24 }, () => ({ byFamily: {}, messages: 0 })));
+}
+// Fold one parsed day's per-hour buckets into the grid at that day's weekday row.
+function accumulatePunchcard(grid, day, dayData) {
+  const row = grid[weekdayOf(day)];
+  for (const [h, hb] of Object.entries(dayData.hours || {})) {
+    const cell = row[h];
+    if (!cell) continue; // ignore an out-of-range hour key, just in case
+    cell.messages += hb.messages || 0;
+    for (const [fam, b] of Object.entries(hb.byFamily || {})) addBundle(famBundleIn(cell.byFamily, fam), b);
+  }
+}
+// Price the grid into two 7×24 number matrices the client renders as a heatmap.
+function pricePunchcard(grid) {
+  return {
+    cost: grid.map((row) => row.map((cell) => priceBundles(cell.byFamily).cost)),
+    messages: grid.map((row) => row.map((cell) => cell.messages)),
+  };
+}
+
 // --- Transcript parsing (cached by file mtime + size) -----------------------
 // Stores raw token counts per day per model family; cost is computed later.
 const sessionCache = new Map();
@@ -357,13 +405,16 @@ function parseSession(filePath) {
   const getDay = (ts) => {
     const key = dayOf(ts, data.start);
     if (!data.days[key]) {
-      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {}, bySkill: {}, byMcp: {} };
+      // hours: { 0..23 -> { byFamily, messages } } for the activity punchcard.
+      data.days[key] = { userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {}, byFamily: {}, bySkill: {}, byMcp: {}, hours: {} };
     }
     return data.days[key];
   };
-  const getFam = (day, fam) => {
-    if (!day.byFamily[fam]) day.byFamily[fam] = emptyBundle();
-    return day.byFamily[fam];
+  const getFam = (day, fam) => famBundleIn(day.byFamily, fam);
+  const getHour = (day, ts) => {
+    const h = hourOf(ts);
+    if (!day.hours[h]) day.hours[h] = { byFamily: {}, messages: 0 };
+    return day.hours[h];
   };
 
   for (const line of raw.split('\n')) {
@@ -395,7 +446,9 @@ function parseSession(filePath) {
       const msg = o.message;
       const family = modelFamily(msg.model);
       const day = getDay(o.timestamp);
+      const hour = getHour(day, o.timestamp);
       day.assistantMessages += 1;
+      hour.messages += 1;
 
       if (Array.isArray(msg.content)) {
         for (const b of msg.content) {
@@ -411,6 +464,7 @@ function parseSession(filePath) {
       if (u) {
         const bundle = usageToBundle(u);
         addBundle(getFam(day, family), bundle);
+        addBundle(famBundleIn(hour.byFamily, family), bundle);
         // Attribute the same tokens to the skill / MCP server that drove the turn,
         // when Claude Code tagged the message. Both ride on usage-bearing messages.
         if (o.attributionSkill) addBundle(nestFam(day.bySkill, o.attributionSkill, family), bundle);
@@ -497,6 +551,7 @@ function projectDetail(folder, from, to) {
   const byMcp = {}; // mcp server name -> family -> bundle
   const tools = {};
   const dayMap = {}; // date -> { byFamily, messages, userPrompts }
+  const punch = emptyPunchGrid(); // [weekday][hour] activity, priced at the end
   const prev = previousPeriod(from, to);
   const prevGrand = {};
   let prevPrompts = 0;
@@ -551,6 +606,7 @@ function projectDetail(folder, from, to) {
         if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
         addBundle(dayMap[day].byFamily[fam], b);
       }
+      accumulatePunchcard(punch, day, d);
       if (!dataStart || day < dataStart) dataStart = day;
       if (!dataEnd || day > dataEnd) dataEnd = day;
     }
@@ -576,7 +632,10 @@ function projectDetail(folder, from, to) {
   sessions.sort((a, b) => (b.end || '').localeCompare(a.end || ''));
 
   const daily = Object.entries(dayMap)
-    .map(([date, v]) => ({ date, cost: priceBundles(v.byFamily).cost, messages: v.messages, userPrompts: v.userPrompts }))
+    .map(([date, v]) => {
+      const pr = priceBundles(v.byFamily);
+      return { date, cost: pr.cost, costByFamily: pr.costByFamily, messages: v.messages, userPrompts: v.userPrompts };
+    })
     .sort((a, b) => a.date.localeCompare(b.date));
   const topTools = Object.entries(tools)
     .map(([name, count]) => ({ name, count }))
@@ -606,6 +665,7 @@ function projectDetail(folder, from, to) {
       prompt: userPrompts ? totals.cost / userPrompts : 0,
     },
     daily,
+    punchcard: pricePunchcard(punch),
     topTools,
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
@@ -629,6 +689,7 @@ function overview(from, to) {
   const byMcp = {}; // mcp server name -> family -> bundle
   const tools = {};
   const dayMap = {};
+  const punch = emptyPunchGrid(); // [weekday][hour] activity across all projects
   const monthGrand = {}; // month-to-date tokens, independent of the selected range
   const M = currentMonthInfo();
   const prev = previousPeriod(from, to); // equal-length window before [from,to]
@@ -715,6 +776,7 @@ function overview(from, to) {
           if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
           addBundle(dayMap[day].byFamily[fam], b);
         }
+        accumulatePunchcard(punch, day, d);
         if (!dataStart || day < dataStart) dataStart = day;
         if (!dataEnd || day > dataEnd) dataEnd = day;
       }
@@ -759,7 +821,10 @@ function overview(from, to) {
   };
 
   const daily = Object.entries(dayMap)
-    .map(([date, v]) => ({ date, cost: priceBundles(v.byFamily).cost, messages: v.messages, userPrompts: v.userPrompts }))
+    .map(([date, v]) => {
+      const pr = priceBundles(v.byFamily);
+      return { date, cost: pr.cost, costByFamily: pr.costByFamily, messages: v.messages, userPrompts: v.userPrompts };
+    })
     .sort((a, b) => a.date.localeCompare(b.date));
   const topTools = Object.entries(tools)
     .map(([name, count]) => ({ name, count }))
@@ -785,6 +850,7 @@ function overview(from, to) {
       prompt: userPrompts ? totals.cost / userPrompts : 0,
     },
     daily,
+    punchcard: pricePunchcard(punch),
     topTools,
     topSkills: priceByName(bySkill),
     topMcp: priceByName(byMcp),
@@ -1059,17 +1125,23 @@ module.exports = {
   getMonthlyBudget,
   currentMonthInfo,
   shiftDay,
+  weekdayOf,
+  hourOf,
   previousPeriod,
   makeDelta,
   modelFamily,
   emptyBundle,
   addBundle,
+  famBundleIn,
   usageToBundle,
   nestFam,
   mergeByName,
   priceBundles,
   priceByName,
   efficiencyStats,
+  emptyPunchGrid,
+  accumulatePunchcard,
+  pricePunchcard,
   inRange,
   aggregateSession,
 };

@@ -21,6 +21,14 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   timeline, tool usage, duration, and totals.
 - **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
   across every view.
+- **Live monitoring** — a **Live** toggle auto-refreshes the current view every 20s
+  (no flicker — table sort and scroll position are preserved) so you can watch an
+  in-progress session's spend climb. Shows today's spend and "updated Ns ago", pauses
+  in a background tab, and remembers the setting across reloads.
+- **Activity analytics** — a weekday × hour **punchcard heatmap** (spend intensity by
+  hour, in UTC), day-level callouts (active days, average per active day, priciest day,
+  busiest day), and a **daily-spend chart stacked by model** so the per-model mix is
+  visible over time. On the per-project and all-projects views.
 - **Budget & burn-rate projection** — set a monthly budget and the All-projects view
   shows month-to-date spend, a projected month-end total at the current pace, and a
   budget bar that flags when you're trending over.
@@ -158,11 +166,13 @@ configured number of days.
 ## How it works
 
 - `server.js` — scans `~/.claude/projects/*`, parses each `.jsonl` session transcript,
-  and keeps per-day / per-model token counts (cost is priced at query time, so date
-  filtering and `pricing.json` edits both take effect without re-parsing). Parsed
-  sessions are cached by file mtime + size, so only the first scan is slow. Endpoints:
-  `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
-  (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
+  and keeps per-day / per-hour / per-model token counts (cost is priced at query time,
+  so date filtering and `pricing.json` edits both take effect without re-parsing).
+  Parsed sessions are cached by file mtime + size, so only the first scan is slow.
+  `/api/overview` and `/api/project/:id` also return a `punchcard` (a priced 7×24
+  weekday×hour grid) and per-model daily costs. Endpoints: `/api/projects`,
+  `/api/overview`, `/api/project/:id`, `/api/session/:project/:id` (all accept
+  `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
 
 ## License

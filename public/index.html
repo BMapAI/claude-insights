@@ -111,7 +111,37 @@
   .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 2px; }
   .bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; }
   .bar:hover { opacity: .7; }
+  .seg { width: 100%; }
+  .seg:first-child { border-radius: 3px 3px 0 0; }
   .chart-x { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 6px; }
+
+  /* Day-stat chips above the daily chart */
+  .daystats { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 14px; }
+  .daystat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+  .daystat .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .daystat .v small { color: var(--muted); font-weight: 400; font-size: 11px; }
+
+  /* Activity punchcard (weekday × hour heatmap) */
+  .heat { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 2px; min-width: 540px; }
+  .heat .rlab { color: var(--muted); font-size: 10px; display: flex; align-items: center; height: 15px; }
+  .heat .cell { height: 15px; border-radius: 2px; background: var(--panel-2); }
+  .heat .cell:hover { outline: 1px solid var(--text); }
+  .heataxis { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 2px; margin-top: 4px; }
+  .heataxis span { color: var(--muted); font-size: 10px; text-align: center; }
+  .heatwrap { overflow-x: auto; }
+
+  /* Live-monitor control */
+  .livebtn {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 11px; font-size: 13px; cursor: pointer;
+  }
+  .livebtn:hover { color: var(--text); }
+  .livebtn .dot { background: var(--muted); }
+  .livebtn.on { color: var(--good); border-color: var(--good); }
+  .livebtn.on .dot { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  .fb-spacer { flex: 1; }
 
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -159,6 +189,9 @@
       <input type="date" id="from" class="dateinput" />
       <span class="fb-dash">–</span>
       <input type="date" id="to" class="dateinput" />
+      <span class="fb-spacer"></span>
+      <button id="live-toggle" class="livebtn" title="Auto-refresh every 20s"><span class="dot"></span>Live</button>
+      <span class="fb-label" id="live-status"></span>
     </div>
     <div class="inner">
       <div class="empty" id="empty">
@@ -215,6 +248,7 @@ let PROJECTS = [];
 let activeId = null;            // sidebar selection: '__all__' or folder id
 let view = { type: 'overview', projectId: null, sessionId: null };
 let range = { from: null, to: null };
+let lastDaily = null;           // daily series of the loaded view (for today's-spend readout)
 
 function qs() {
   const p = new URLSearchParams();
@@ -245,7 +279,7 @@ function applyRange(newRange, presetName) {
   document.getElementById('from').value = newRange.from || '';
   document.getElementById('to').value = newRange.to || '';
   setActivePreset(presetName || null);
-  loadProjects().then(refresh);
+  loadProjects().then(() => refresh());
 }
 
 // --- Sessions table sorting -------------------------------------------------
@@ -371,15 +405,60 @@ function modelSplit(costByFamily, total) {
   const legend = fams.map(([f, c]) => `<span class="item"><span class="dot" style="background:${MODEL_COLORS[f] || '#888'}"></span>${esc(f)} — ${fmtUSD(c)} (${(c / total * 100).toFixed(0)}%)</span>`).join('');
   return `<div class="split">${bar}</div><div class="legend">${legend}</div>`;
 }
+// DOM order for stacked segments: last child sits at the bottom of the bar, so
+// opus (usually the largest) anchors the stack and haiku caps it.
+const FAM_ORDER = ['haiku', 'sonnet', 'opus'];
 function dailyChart(daily) {
   if (!daily.length) return '<div class="loading">No dated activity in range.</div>';
   const max = Math.max(...daily.map((d) => d.cost), 0.0001);
-  const bars = daily.map((d) =>
-    `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs">
-       <div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>
-     </div>`).join('');
+  const bars = daily.map((d) => {
+    const cbf = d.costByFamily || { opus: d.cost };
+    const present = FAM_ORDER.filter((f) => cbf[f] > 0);
+    const segs = present.map((f) =>
+      `<div class="seg" style="height:${(cbf[f] / max * 142).toFixed(2)}px;background:${MODEL_COLORS[f]}"></div>`).join('');
+    const bd = Object.entries(cbf).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1])
+      .map(([f, c]) => `${f} ${fmtUSD(c)}`).join(' · ');
+    const inner = segs || `<div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>`;
+    return `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs${bd ? '\n' + bd : ''}">${inner}</div>`;
+  }).join('');
   return `<div class="chart">${bars}</div>
     <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
+}
+// Quick callouts derived from the daily series (active days, average, extremes).
+function dayStatsRow(daily) {
+  const active = (daily || []).filter((d) => d.cost > 0);
+  if (!active.length) return '';
+  const total = active.reduce((s, d) => s + d.cost, 0);
+  const priciest = active.reduce((a, b) => (b.cost > a.cost ? b : a));
+  const busiest = active.reduce((a, b) => (b.messages > a.messages ? b : a));
+  const stat = (k, v) => `<div class="daystat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  return `<div class="daystats">
+    ${stat('Active days', fmtNum(active.length))}
+    ${stat('Avg / active day', fmtUSD(total / active.length))}
+    ${stat('Priciest day', `${fmtUSD(priciest.cost)} <small>${esc(priciest.date)}</small>`)}
+    ${stat('Busiest day', `${fmtNum(busiest.messages)} <small>msgs · ${esc(busiest.date)}</small>`)}
+  </div>`;
+}
+// Weekday × hour spend heatmap. Display rows Mon→Sun; cost drives accent opacity.
+const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WD_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function punchcardSection(pc) {
+  if (!pc || !pc.cost) return '';
+  let max = 0, total = 0;
+  for (let w = 0; w < 7; w++) for (let h = 0; h < 24; h++) { const c = pc.cost[w][h]; total += c; if (c > max) max = c; }
+  if (total <= 0) return '';
+  const rows = WD_ORDER.map((w) => {
+    const cells = pc.cost[w].map((c, h) => {
+      const bg = c > 0 ? `rgba(217,119,87,${(0.14 + 0.86 * (c / max)).toFixed(3)})` : 'var(--panel-2)';
+      return `<div class="cell" style="background:${bg}" title="${WD_LABEL[w]} ${String(h).padStart(2, '0')}:00 UTC — ${fmtUSD(c)} · ${fmtNum(pc.messages[w][h])} msgs"></div>`;
+    }).join('');
+    return `<div class="rlab">${WD_LABEL[w]}</div>${cells}`;
+  }).join('');
+  const axis = '<span></span>' + Array.from({ length: 24 }, (_, h) => `<span>${h % 6 === 0 ? h : ''}</span>`).join('');
+  return `<div class="section"><h3>Activity by hour (UTC)</h3>
+    <div class="heatwrap"><div class="heat">${rows}</div><div class="heataxis">${axis}</div></div>
+    <div class="hint" style="margin-top:8px">Spend intensity by weekday × hour (UTC). Darker = more spend in that hour · peak ${fmtUSD(max)}/hr.</div>
+  </div>`;
 }
 function efficiencySection(e) {
   if (!e || e.cost <= 0) return '';
@@ -527,32 +606,89 @@ function openSession(projectId, sessionId) {
   view = { type: 'session', projectId, sessionId };
   refresh();
 }
-async function refresh() {
+// silent=true is the live-refresh path: don't blank to "Loading…", keep the
+// user's table sort + scroll position, and leave the view intact on error.
+async function refresh(silent) {
+  const main = document.getElementById('main');
+  const scroll = main ? main.scrollTop : 0;
   document.getElementById('empty').style.display = 'none';
   const detail = document.getElementById('detail');
   detail.style.display = 'block';
-  detail.innerHTML = '<div class="loading" style="margin-top:24px">Loading…</div>';
+  if (!silent) detail.innerHTML = '<div class="loading" style="margin-top:24px">Loading…</div>';
   try {
     if (view.type === 'overview') {
       const res = await fetch('/api/overview' + qs());
       if (!res.ok) throw new Error('overview');
-      renderOverview(await res.json());
+      renderOverview(await res.json(), { preserve: silent });
     } else if (view.type === 'project') {
       const res = await fetch('/api/project/' + encodeURIComponent(view.projectId) + qs());
       if (!res.ok) throw new Error('project');
-      renderDetail(await res.json());
+      renderDetail(await res.json(), { preserve: silent });
     } else if (view.type === 'session') {
       const res = await fetch('/api/session/' + encodeURIComponent(view.projectId) + '/' + encodeURIComponent(view.sessionId));
       if (!res.ok) throw new Error('session');
       renderSession(await res.json());
     }
+    if (silent && main) main.scrollTop = scroll;
   } catch (e) {
-    detail.innerHTML = '<div class="loading" style="margin-top:24px">Failed to load (' + esc(e.message) + ').</div>';
+    if (!silent) detail.innerHTML = '<div class="loading" style="margin-top:24px">Failed to load (' + esc(e.message) + ').</div>';
   }
 }
 
+// --- Live monitoring --------------------------------------------------------
+// Polls the current view on an interval so the dashboard tracks an in-progress
+// session's spend. Parsing is mtime-cached server-side, so ticks are cheap.
+const LIVE = { on: false, ms: 20000, fetchTimer: null, tickTimer: null, lastAt: null, busy: false };
+function todaySpend() {
+  if (!lastDaily) return null;
+  const today = new Date().toISOString().slice(0, 10); // UTC, matches the day-keys
+  const e = lastDaily.find((d) => d.date === today);
+  return e ? e.cost : 0;
+}
+function agoStr(t) {
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago';
+}
+function renderLiveStatus() {
+  const el = document.getElementById('live-status');
+  if (!el) return;
+  if (!LIVE.on) { el.textContent = ''; return; }
+  const parts = [];
+  const ts = todaySpend();
+  if (ts != null) parts.push('today ' + fmtUSD(ts));
+  if (LIVE.busy) parts.push('updating…');
+  else if (LIVE.lastAt) parts.push('updated ' + agoStr(LIVE.lastAt));
+  el.textContent = parts.join('  ·  ');
+}
+async function liveTick() {
+  if (LIVE.busy) return;
+  LIVE.busy = true; renderLiveStatus();
+  try { await loadProjects(); await refresh(true); LIVE.lastAt = Date.now(); }
+  catch (e) { /* keep the last good view; try again next tick */ }
+  finally { LIVE.busy = false; renderLiveStatus(); }
+}
+function stopLiveTimers() {
+  if (LIVE.fetchTimer) clearInterval(LIVE.fetchTimer);
+  if (LIVE.tickTimer) clearInterval(LIVE.tickTimer);
+  LIVE.fetchTimer = LIVE.tickTimer = null;
+}
+function startLiveTimers() {
+  stopLiveTimers();
+  LIVE.fetchTimer = setInterval(liveTick, LIVE.ms);
+  LIVE.tickTimer = setInterval(renderLiveStatus, 1000); // keep the "Ns ago" fresh
+}
+function setLive(on) {
+  LIVE.on = on;
+  try { localStorage.setItem('ledger.live', on ? '1' : '0'); } catch (e) {}
+  const btn = document.getElementById('live-toggle');
+  if (btn) btn.classList.toggle('on', on);
+  if (on) { startLiveTimers(); liveTick(); } else { stopLiveTimers(); renderLiveStatus(); }
+}
+
 // --- Views ------------------------------------------------------------------
-function renderOverview(d) {
+function renderOverview(d, opts) {
+  opts = opts || {};
+  lastDaily = d.daily;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
@@ -574,7 +710,8 @@ function renderOverview(d) {
     </div>
     ${efficiencySection(d.efficiency)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
-    <div class="section"><h3>Daily spend — all projects</h3>${dailyChart(d.daily)}</div>
+    <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
+    ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
@@ -590,12 +727,14 @@ function renderOverview(d) {
   leadData = d.projects;
   leadMax = maxCost;
   leadHasPrev = !!d.delta;
-  leadSort = { key: 'cost', dir: 'desc' };
+  if (!opts.preserve) leadSort = { key: 'cost', dir: 'desc' };
   document.querySelectorAll('#lead-head th').forEach((th) => th.addEventListener('click', () => onLeadHeader(th.dataset.key)));
   renderLeaderboard();
 }
 
-function renderDetail(d) {
+function renderDetail(d, opts) {
+  opts = opts || {};
+  lastDaily = d.daily;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   document.getElementById('detail').innerHTML = `
@@ -615,7 +754,8 @@ function renderDetail(d) {
     </div>
     ${efficiencySection(d.efficiency)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}</div>
-    <div class="section"><h3>Daily spend</h3>${dailyChart(d.daily)}</div>
+    <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
+    ${punchcardSection(d.punchcard)}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
@@ -629,12 +769,13 @@ function renderDetail(d) {
       </table>
     </div>`;
   sessData = d.sessions;
-  sessSort = { key: 'end', dir: 'desc' };
+  if (!opts.preserve) sessSort = { key: 'end', dir: 'desc' };
   document.querySelectorAll('#sess-head th').forEach((th) => th.addEventListener('click', () => onSessHeader(th.dataset.key)));
   renderSessions();
 }
 
 function renderSession(d) {
+  lastDaily = null;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const proj = PROJECTS.find((p) => p.id === d.projectId);
@@ -680,6 +821,12 @@ async function init() {
       applyRange({ from, to }, null);
     })
   );
+  document.getElementById('live-toggle').addEventListener('click', () => setLive(!LIVE.on));
+  document.addEventListener('visibilitychange', () => {
+    if (!LIVE.on) return;
+    if (document.hidden) stopLiveTimers();      // pause polling in a background tab
+    else { startLiveTimers(); liveTick(); }     // catch up on return
+  });
 
   const data = await loadProjects();
   if (data.bounds) {
@@ -690,6 +837,10 @@ async function init() {
     });
   }
   if (PROJECTS.length) selectProject('__all__');
+
+  let wantLive = false;
+  try { wantLive = localStorage.getItem('ledger.live') === '1'; } catch (e) {}
+  if (wantLive && PROJECTS.length) setLive(true);
 }
 
 init().catch((e) => {
