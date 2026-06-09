@@ -1,5 +1,8 @@
 # Claude Ledger
 
+[![CI](https://github.com/BMapAI/claude-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/BMapAI/claude-ledger/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@bmapai/claude-ledger)](https://www.npmjs.com/package/@bmapai/claude-ledger)
+
 A zero-dependency cost / ROI analyzer for [Claude Code](https://claude.com/claude-code) projects.
 
 It reads the session transcripts under `~/.claude/projects`, attributes token usage
@@ -102,9 +105,17 @@ Local, read-only, and dependency-free.
 
 ## Run
 
+The fastest way — no clone needed:
+
+```bash
+npx @bmapai/claude-ledger
+# → http://127.0.0.1:4317
+```
+
+Or run from a clone (e.g. to hack on it):
+
 ```bash
 node server.js
-# → http://127.0.0.1:4317
 ```
 
 Configuration via environment variables:

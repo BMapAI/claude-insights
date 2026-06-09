@@ -1,10 +1,13 @@
 {
-  "name": "claude-ledger",
+  "name": "@bmapai/claude-ledger",
   "version": "1.0.0",
   "description": "ROI / cost analyzer for Claude Code projects under ~/.claude/projects",
   "main": "server.js",
   "bin": {
     "claude-ledger": "server.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "server.js",
