@@ -29,6 +29,10 @@
     display: flex;
   }
   a { color: var(--accent-2); cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
 
   #sidebar {
     width: 320px; min-width: 320px; height: 100vh; overflow-y: auto;
@@ -39,7 +43,7 @@
   .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
   .brand .sub { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-all; }
   .proj-list { padding: 8px; }
-  .proj { padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; }
+  .proj { width: 100%; display: block; text-align: left; font: inherit; color: inherit; background: transparent; padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; }
   .proj:hover { background: var(--panel-2); }
   .proj.active { background: var(--panel-2); border-color: var(--accent); }
   .proj.all { border-color: var(--border); background: var(--panel-2); margin-bottom: 10px; }
@@ -77,7 +81,7 @@
   .header h2 { margin: 0 0 4px; font-size: 22px; }
   .header .path { color: var(--muted); font-size: 13px; word-break: break-all; }
   .header .path .branch { color: var(--good); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; margin-left: 8px; font-size: 11px; }
-  .backlink { display: inline-block; margin: 18px 0 2px; font-size: 13px; }
+  .backlink { display: inline-block; margin: 18px 0 2px; font-size: 13px; background: none; border: 0; padding: 0; font-family: inherit; color: var(--accent-2); cursor: pointer; }
 
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin: 22px 0; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px; }
@@ -169,6 +173,7 @@
   .title-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-link { cursor: pointer; }
   .row-link:hover { background: var(--panel-2); }
+  .rowbtn { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
   .share { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; vertical-align: middle; }
   .share-fill { display: block; height: 100%; background: var(--accent); }
 
@@ -206,7 +211,7 @@
       <input type="date" id="to" class="dateinput" />
       <span class="fb-spacer"></span>
       <button id="live-toggle" class="livebtn" title="Auto-refresh every 20s"><span class="dot"></span>Live</button>
-      <span class="fb-label" id="live-status"></span>
+      <span class="fb-label" id="live-status" aria-live="polite"></span>
     </div>
     <div class="inner">
       <div class="empty" id="empty">
@@ -367,7 +372,7 @@ function renderSessions() {
   body.innerHTML = rows.map((s) => {
     const tk = sessionTokens(s);
     return `<tr class="row-link" data-sid="${esc(s.id)}">
-      <td class="title-cell" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</td>
+      <td class="title-cell"><button type="button" class="rowbtn" title="${esc(s.firstPrompt || s.title)}">${esc(s.title)}</button></td>
       <td class="num">${fmtNum(s.userPrompts)}</td>
       <td class="num">${fmtNum(s.toolUses)}</td>
       <td class="num">${fmtTokens(tk)}</td>
@@ -375,12 +380,16 @@ function renderSessions() {
       <td class="num">${relTime(s.end)}</td>
     </tr>`;
   }).join('');
-  body.querySelectorAll('.row-link').forEach((node) =>
-    node.addEventListener('click', () => openSession(view.projectId, node.dataset.sid))
-  );
+  body.querySelectorAll('.row-link').forEach((node) => {
+    const go = () => openSession(view.projectId, node.dataset.sid);
+    node.addEventListener('click', go);
+    const btn = node.querySelector('.rowbtn');
+    if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); go(); });
+  });
   document.querySelectorAll('#sess-head th').forEach((th) => {
     const active = th.dataset.key === key;
     th.classList.toggle('sorted', active);
+    th.setAttribute('aria-sort', active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none');
     th.querySelector('.arrow').textContent = active ? (dir === 'asc' ? '▲' : '▼') : '';
   });
 }
@@ -425,7 +434,7 @@ function renderLeaderboard() {
   });
   body.innerHTML = rows.map((p) => `
     <tr class="row-link" data-id="${esc(p.id)}">
-      <td class="title-cell" title="${esc(p.cwd)}">${esc(p.name)}</td>
+      <td class="title-cell"><button type="button" class="rowbtn" title="${esc(p.cwd)}">${esc(p.name)}</button></td>
       <td class="num">${fmtUSD(p.cost)}</td>
       <td class="num"><span class="share"><span class="share-fill" style="width:${(p.cost / leadMax * 100).toFixed(1)}%"></span></span></td>
       ${leadHasPrev ? `<td class="num">${trendCell(p)}</td>` : ''}
@@ -435,12 +444,16 @@ function renderLeaderboard() {
       <td class="num">${fmtMs(p.turnMs)}</td>
       <td class="num">${relTime(p.lastActive)}</td>
     </tr>`).join('');
-  body.querySelectorAll('.row-link').forEach((node) =>
-    node.addEventListener('click', () => selectProject(node.dataset.id))
-  );
+  body.querySelectorAll('.row-link').forEach((node) => {
+    const go = () => selectProject(node.dataset.id);
+    node.addEventListener('click', go);
+    const btn = node.querySelector('.rowbtn');
+    if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); go(); });
+  });
   document.querySelectorAll('#lead-head th').forEach((th) => {
     const active = th.dataset.key && th.dataset.key === key;
     th.classList.toggle('sorted', !!active);
+    if (th.dataset.key) th.setAttribute('aria-sort', active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none');
     const arrow = th.querySelector('.arrow');
     if (arrow) arrow.textContent = active ? (dir === 'asc' ? '▲' : '▼') : '';
   });
@@ -511,7 +524,7 @@ function punchcardSection(pc) {
   }).join('');
   const axis = '<span></span>' + Array.from({ length: 24 }, (_, h) => `<span>${h % 6 === 0 ? h : ''}</span>`).join('');
   return `<div class="section"><h3>Activity by hour (UTC)</h3>
-    <div class="heatwrap"><div class="heat">${rows}</div><div class="heataxis">${axis}</div></div>
+    <div class="heatwrap"><div class="heat" role="img" aria-label="Activity heatmap: spend by weekday and hour in UTC; peak ${fmtUSD(max)} per hour.">${rows}</div><div class="heataxis" aria-hidden="true">${axis}</div></div>
     <div class="hint" style="margin-top:8px">Spend intensity by weekday × hour (UTC). Darker = more spend in that hour · peak ${fmtUSD(max)}/hr.</div>
   </div>`;
 }
@@ -788,15 +801,15 @@ function renderProjectList() {
   }
   const grandTotal = PROJECTS.reduce((s, p) => s + p.cost, 0);
   const allRow = `
-    <div class="proj all ${activeId === '__all__' ? 'active' : ''}" data-id="__all__">
+    <button type="button" class="proj all ${activeId === '__all__' ? 'active' : ''}" data-id="__all__"${activeId === '__all__' ? ' aria-current="true"' : ''}>
       <div class="name"><span class="title-cell">▦ All projects</span><span class="cost">${fmtUSD(grandTotal)}</span></div>
       <div class="meta"><span>${PROJECTS.length} projects · combined</span><span></span></div>
-    </div>`;
+    </button>`;
   el.innerHTML = allRow + PROJECTS.map((p) => `
-    <div class="proj ${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}">
+    <button type="button" class="proj ${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}"${p.id === activeId ? ' aria-current="true"' : ''}>
       <div class="name"><span class="title-cell">${esc(p.name)}</span><span class="cost">${fmtUSD(p.cost)}</span></div>
       <div class="meta"><span>${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts</span><span>${relTime(p.lastActive)}</span></div>
-    </div>`).join('');
+    </button>`).join('');
   el.querySelectorAll('.proj').forEach((node) => node.addEventListener('click', () => selectProject(node.dataset.id)));
 }
 
@@ -933,7 +946,7 @@ function renderOverview(d, opts) {
       <h3>Projects by spend (${d.projects.length}) <a class="csvlink" href="/api/overview.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="lead-head">
-          ${LEAD_COLS.map((c) => { if (c.trend && !d.delta) return ''; const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}"${s ? ` data-key="${c.key}"` : ''}>${c.label}${s ? '<span class="arrow"></span>' : ''}</th>`; }).join('')}
+          ${LEAD_COLS.map((c) => { if (c.trend && !d.delta) return ''; const s = c.key !== null; return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}" scope="col"${s ? ` data-key="${c.key}" tabindex="0" aria-sort="none"` : ''}>${c.label}${s ? '<span class="arrow" aria-hidden="true"></span>' : ''}</th>`; }).join('')}
         </tr></thead>
         <tbody id="lead-body"></tbody>
       </table>
@@ -942,7 +955,11 @@ function renderOverview(d, opts) {
   leadMax = maxCost;
   leadHasPrev = !!d.delta;
   if (!opts.preserve) leadSort = { key: 'cost', dir: 'desc' };
-  document.querySelectorAll('#lead-head th').forEach((th) => th.addEventListener('click', () => onLeadHeader(th.dataset.key)));
+  document.querySelectorAll('#lead-head th').forEach((th) => {
+    const go = () => onLeadHeader(th.dataset.key);
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && th.dataset.key) { e.preventDefault(); go(); } });
+  });
   renderLeaderboard();
 }
 
@@ -982,14 +999,18 @@ function renderDetail(d, opts) {
       <h3>Sessions (${d.sessions.length}) — click a row for details <a class="csvlink" href="/api/project/${encodeURIComponent(d.id)}.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="sess-head">
-          ${SESS_COLS.map((c) => `<th class="sortable${c.num ? ' num' : ''}" data-key="${c.key}">${c.label}<span class="arrow"></span></th>`).join('')}
+          ${SESS_COLS.map((c) => `<th class="sortable${c.num ? ' num' : ''}" scope="col" tabindex="0" aria-sort="none" data-key="${c.key}">${c.label}<span class="arrow" aria-hidden="true"></span></th>`).join('')}
         </tr></thead>
         <tbody id="sess-body"></tbody>
       </table>
     </div>`;
   sessData = d.sessions;
   if (!opts.preserve) sessSort = { key: 'end', dir: 'desc' };
-  document.querySelectorAll('#sess-head th').forEach((th) => th.addEventListener('click', () => onSessHeader(th.dataset.key)));
+  document.querySelectorAll('#sess-head th').forEach((th) => {
+    const go = () => onSessHeader(th.dataset.key);
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
   renderSessions();
 }
 
@@ -1005,7 +1026,7 @@ function renderSession(d) {
        <div class="chart-x"><span>start</span><span>peak ${fmtUSD(maxStep)}/turn</span><span>end</span></div>`
     : '<div class="loading">No priced turns.</div>';
   document.getElementById('detail').innerHTML = `
-    <a class="backlink" id="sess-back">← ${esc(projName)}</a>
+    <button type="button" class="backlink" id="sess-back">← ${esc(projName)}</button>
     <div class="header">
       <h2>${esc(d.title)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
