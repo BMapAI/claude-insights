@@ -2,3 +2,7 @@ node_modules/
 *.log
 .DS_Store
 .env
+
+# Local screenshot tooling (regenerates docs/overview.png from synthetic demo
+# data). The generated PNG is committed; the generator + its scratch data are not.
+tools/
