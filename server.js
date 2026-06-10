@@ -25,6 +25,9 @@ const PROJECTS_DIR =
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.dirname(PROJECTS_DIR);
 const HISTORY_FILE = process.env.HISTORY_FILE || path.join(CLAUDE_DIR, 'history.jsonl');
 const PLANS_DIR = process.env.PLANS_DIR || path.join(CLAUDE_DIR, 'plans');
+const FILE_HISTORY_DIR = process.env.FILE_HISTORY_DIR || path.join(CLAUDE_DIR, 'file-history');
+const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join(CLAUDE_DIR, 'sessions');
+const TASKS_DIR = process.env.TASKS_DIR || path.join(CLAUDE_DIR, 'tasks');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PRICING_FILE = process.env.PRICING_FILE || path.join(__dirname, 'pricing.json');
 const CONFIG_FILE = process.env.CONFIG_FILE || path.join(__dirname, 'config.json');
@@ -1275,6 +1278,166 @@ function analyzePlans(from, to) {
   };
 }
 
+// --- File-history churn (the VOLUME side of output) -------------------------
+// file-history/<sessionId>/<fileHash>@vN holds full snapshots of each edited file
+// at each version. Diffing consecutive versions of a fileHash gives lines
+// added/removed — a real output-volume signal, a step up from "files touched".
+// The diff is an order-insensitive multiset diff (cheap, O(lines)): a changed
+// line counts as +1 added / +1 removed and moves are ignored, so it's an
+// APPROXIMATE churn, labeled as such in the UI. Per-session results are cached on
+// the session dir's mtime, so only sessions with a new version are re-read.
+const VERSION_RE = /^(.*)@v(\d+)$/;
+const MAX_CHURN_FILE_BYTES = 2 * 1024 * 1024; // skip pathologically large snapshots
+function lineCounts(txt) {
+  const m = new Map();
+  let start = 0;
+  const n = txt.length;
+  while (start <= n) {
+    let nl = txt.indexOf('\n', start);
+    if (nl === -1) nl = n;
+    const line = txt.slice(start, nl);
+    m.set(line, (m.get(line) || 0) + 1);
+    if (nl === n) break;
+    start = nl + 1;
+  }
+  return m;
+}
+function lineChurn(oldText, newText) {
+  const a = lineCounts(oldText);
+  const b = lineCounts(newText);
+  let added = 0, removed = 0;
+  for (const [line, bc] of b) { const ac = a.get(line) || 0; if (bc > ac) added += bc - ac; }
+  for (const [line, ac] of a) { const bc = b.get(line) || 0; if (ac > bc) removed += ac - bc; }
+  return { added, removed };
+}
+function computeSessionChurn(dirPath) {
+  let names;
+  try { names = fs.readdirSync(dirPath); } catch { return null; }
+  const groups = new Map(); // fileHash -> [{ v, file }]
+  for (const name of names) {
+    const m = VERSION_RE.exec(name);
+    if (!m) continue;
+    const hash = m[1];
+    if (!groups.has(hash)) groups.set(hash, []);
+    groups.get(hash).push({ v: Number(m[2]), file: path.join(dirPath, name) });
+  }
+  let added = 0, removed = 0, revisions = 0, filesRevised = 0, skipped = 0;
+  for (const versions of groups.values()) {
+    versions.sort((a, b) => a.v - b.v);
+    revisions += versions.length;
+    let prev = null, changed = false;
+    for (const { file } of versions) {
+      let txt;
+      try {
+        const st = fs.statSync(file);
+        if (st.size > MAX_CHURN_FILE_BYTES) { skipped += 1; break; }
+        txt = fs.readFileSync(file, 'utf8');
+      } catch { break; }
+      if (prev != null) {
+        const c = lineChurn(prev, txt);
+        added += c.added; removed += c.removed;
+        if (c.added || c.removed) changed = true;
+      }
+      prev = txt;
+    }
+    if (changed) filesRevised += 1;
+  }
+  return { added, removed, net: added - removed, revisions, filesRevised, skipped };
+}
+const churnCache = new Map(); // sessionId -> { mtimeMs, day, churn }
+function sessionChurn(sessionId) {
+  const dirPath = path.join(FILE_HISTORY_DIR, sessionId);
+  let st;
+  try { st = fs.statSync(dirPath); } catch { return null; }
+  if (!st.isDirectory()) return null;
+  const cached = churnCache.get(sessionId);
+  if (cached && cached.mtimeMs === st.mtimeMs) return cached;
+  const churn = computeSessionChurn(dirPath);
+  if (!churn) return null;
+  const entry = { mtimeMs: st.mtimeMs, day: new Date(st.mtimeMs).toISOString().slice(0, 10), churn };
+  churnCache.set(sessionId, entry);
+  return entry;
+}
+// Aggregate churn over a range, optionally scoped to a Set of session ids (the
+// per-project view). Range-filtered by each session dir's mtime day (when its
+// last edit landed). scope === undefined → every session in file-history.
+function analyzeChurn(from, to, scope) {
+  let names;
+  try { names = fs.readdirSync(FILE_HISTORY_DIR); }
+  catch { return { available: false, added: 0, removed: 0, net: 0, filesRevised: 0, revisions: 0, sessions: 0, skipped: 0 }; }
+  let added = 0, removed = 0, filesRevised = 0, revisions = 0, sessions = 0, skipped = 0;
+  for (const sid of names) {
+    if (scope !== undefined && !scope.has(sid)) continue;
+    const e = sessionChurn(sid);
+    if (!e) continue;
+    if (e.day && !inRange(e.day, from, to)) continue;
+    const c = e.churn;
+    if (!c.filesRevised && !c.added && !c.removed) continue; // tracked but no captured edits
+    added += c.added; removed += c.removed;
+    filesRevised += c.filesRevised; revisions += c.revisions; skipped += c.skipped;
+    sessions += 1;
+  }
+  return { available: names.length > 0, added, removed, net: added - removed, filesRevised, revisions, sessions, skipped };
+}
+
+// --- Sessions & tasks: concurrency + live state -----------------------------
+// Concurrency (how many sessions ran in parallel) is computed from transcript
+// session [start,end] intervals — range-accurate, no extra source. The live
+// registry (sessions/) and background-task dirs (tasks/) are read directly as a
+// snapshot of "now".
+function sessionConcurrency(intervals) {
+  const clean = intervals.filter((it) => it && isFinite(it.start) && isFinite(it.end) && it.end >= it.start);
+  const evs = [];
+  for (const it of clean) { evs.push([it.start, 1]); evs.push([it.end, -1]); }
+  // Tie-break ends (-1) before starts (+1): a session ending exactly as another
+  // starts is not counted as overlapping.
+  evs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let cur = 0, max = 0;
+  for (const [, d] of evs) { cur += d; if (cur > max) max = cur; }
+  let parallel = 0;
+  for (let i = 0; i < clean.length; i++) {
+    for (let j = 0; j < clean.length; j++) {
+      if (i === j) continue;
+      if (clean[i].start < clean[j].end && clean[j].start < clean[i].end) { parallel += 1; break; }
+    }
+  }
+  return { maxConcurrent: max, parallelSessions: parallel, totalSessions: clean.length };
+}
+function loadLiveSessions() {
+  let names;
+  try { names = fs.readdirSync(SESSIONS_DIR); } catch { return []; }
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    let o;
+    try { o = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, name), 'utf8')); } catch { continue; }
+    out.push({
+      name: typeof o.name === 'string' ? o.name : null,
+      cwd: typeof o.cwd === 'string' ? o.cwd : null,
+      status: o.status || 'unknown',
+      kind: o.kind || null,
+      entrypoint: o.entrypoint || null,
+      version: o.version || null,
+      updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : null,
+    });
+  }
+  return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+function analyzeTasks(from, to) {
+  let entries;
+  try { entries = fs.readdirSync(TASKS_DIR, { withFileTypes: true }); }
+  catch { return { available: false, total: 0, inRange: 0 }; }
+  let total = 0, ranged = 0;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    total += 1;
+    let day = null;
+    try { day = new Date(fs.statSync(path.join(TASKS_DIR, e.name)).mtimeMs).toISOString().slice(0, 10); } catch { /* ignore */ }
+    if (day && inRange(day, from, to)) ranged += 1;
+  }
+  return { available: total > 0, total, inRange: ranged };
+}
+
 // --- Date filtering ---------------------------------------------------------
 function inRange(day, from, to) {
   if (from && day < from) return false;
@@ -1577,6 +1740,7 @@ function projectDetail(folder, from, to) {
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
     history: analyzeHistory(from, to, cwd || ''),
+    churn: analyzeChurn(from, to, new Set(items.map((x) => x.s.id))),
   };
 }
 
@@ -1597,6 +1761,7 @@ function overview(from, to) {
   let projectCount = 0;
   const projects = [];
   const scanned = []; // live sessions to persist to the rollup store
+  const intervals = []; // [start,end] ms per in-range session, for concurrency
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
@@ -1640,6 +1805,7 @@ function overview(from, to) {
       if (!agg.has) continue;
       foldSession(pacc, s, agg, from, to);
       foldSession(gacc, s, agg, from, to);
+      if (s.start && s.end) intervals.push({ start: Date.parse(s.start), end: Date.parse(s.end) });
 
       const wlTitle = sessionTitle(s);
       pTitles.push({ title: wlTitle, cost: priceBundles(agg.byFamily).cost });
@@ -1777,6 +1943,10 @@ function overview(from, to) {
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
     history: analyzeHistory(from, to),
     plans: analyzePlans(from, to),
+    churn: analyzeChurn(from, to),
+    concurrency: sessionConcurrency(intervals),
+    liveSessions: loadLiveSessions(),
+    tasks: analyzeTasks(from, to),
     worklog: buildWorkLog({ from, to, cost: c.totals.cost, sessions: gacc.sessionCount, output: c.output, time: c.time, projects, themes: topThemes(themeWords, 6) }),
   };
 }
@@ -2277,6 +2447,12 @@ module.exports = {
   analyzeHistory,
   loadPlans,
   analyzePlans,
+  lineChurn,
+  computeSessionChurn,
+  analyzeChurn,
+  sessionConcurrency,
+  loadLiveSessions,
+  analyzeTasks,
   toCSV,
   csvCell,
   server,

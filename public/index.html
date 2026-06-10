@@ -925,6 +925,48 @@ function plansSection(p) {
     <div class="hint" style="margin-top:10px">Plan-mode documents under <code>~/.claude/plans</code>, by file modified-date. Titles and sizes only.</div>
   </div>`;
 }
+// Code churn from file-history (output VOLUME): approximate lines added/removed
+// from diffing consecutive file snapshots — a better "what did the spend produce"
+// than a file count. On the all-projects and per-project views (d.churn).
+function churnSection(c) {
+  if (!c || !c.available || (!c.added && !c.removed && !c.filesRevised)) return '';
+  const netSign = c.net >= 0 ? '+' : '−';
+  const cards = [
+    `<div class="eff"><div class="label">Lines added</div><div class="value good">+${fmtNum(c.added)}</div></div>`,
+    `<div class="eff"><div class="label">Lines removed</div><div class="value" style="color:var(--warn)">−${fmtNum(c.removed)}</div></div>`,
+    `<div class="eff"><div class="label">Net lines</div><div class="value">${netSign}${fmtNum(Math.abs(c.net))}</div></div>`,
+    `<div class="eff"><div class="label">Files revised</div><div class="value">${fmtNum(c.filesRevised)}<span class="u">${fmtNum(c.revisions)} revisions</span></div></div>`,
+  ].join('');
+  return `<div class="section"><h3>Code churn</h3>
+    <div class="effgrid">${cards}</div>
+    <div class="hint" style="margin-top:10px">Approximate lines changed, from diffing consecutive snapshots in <code>~/.claude/file-history</code> (an order-insensitive line diff — a changed line counts as one added + one removed; moves aren't tracked). Output <em>volume</em>, not a quality measure.${c.skipped ? ` ${fmtNum(c.skipped)} oversized snapshot(s) skipped.` : ''}</div>
+  </div>`;
+}
+// Concurrency (from transcript session overlaps) + a live "running now" readout
+// (sessions/) + background-task count (tasks/). All-projects view only.
+const SESS_STATUS = { busy: 'var(--warn)', idle: 'var(--good)' };
+function sessionsTasksSection(d) {
+  const con = d.concurrency, live = d.liveSessions || [], tasks = d.tasks;
+  const hasCon = con && con.totalSessions > 0;
+  if (!hasCon && !live.length && !(tasks && tasks.available)) return '';
+  const cards = [];
+  if (hasCon) {
+    cards.push(`<div class="eff"><div class="label">Max concurrent</div><div class="value">${fmtNum(con.maxConcurrent)}</div></div>`);
+    cards.push(`<div class="eff"><div class="label">Ran in parallel</div><div class="value">${fmtNum(con.parallelSessions)}<span class="u">of ${fmtNum(con.totalSessions)}</span></div></div>`);
+  }
+  if (live.length) cards.push(`<div class="eff"><div class="label">Running now</div><div class="value">${fmtNum(live.length)}</div></div>`);
+  if (tasks && tasks.available) cards.push(`<div class="eff"><div class="label">Background tasks</div><div class="value">${fmtNum(tasks.total)}${tasks.inRange ? `<span class="u">${fmtNum(tasks.inRange)} in range</span>` : ''}</div></div>`);
+  const liveRows = live.slice(0, 8).map((s) => {
+    const col = SESS_STATUS[s.status] || 'var(--muted)';
+    const nm = s.name || (s.cwd ? s.cwd.split('/').pop() : '(session)');
+    return `<span class="item"><span class="dot" style="background:${col}"></span>${esc(nm)} <span style="opacity:.6">— ${esc(s.status)}${s.entrypoint ? ', ' + esc(s.entrypoint) : ''}</span></span>`;
+  }).join('');
+  return `<div class="section"><h3>Sessions &amp; tasks</h3>
+    <div class="effgrid">${cards.join('')}</div>
+    ${liveRows ? `<div class="legend" style="margin-top:14px">${liveRows}</div>` : ''}
+    <div class="hint" style="margin-top:10px"><strong>Concurrency</strong> is computed from session start/end overlaps in the range (how many ran at once). <strong>Running now</strong> and <strong>background tasks</strong> are a live snapshot from <code>~/.claude/sessions</code> and <code>~/.claude/tasks</code>.</div>
+  </div>`;
+}
 // Turn latency / time-cost: how much wall-clock time the work took, where it
 // went (duration histogram), and spend per hour of active time.
 function timeSection(t) {
@@ -1333,6 +1375,8 @@ function renderOverview(d, opts) {
     ${signalsSection(d.signals)}
     ${commandsSection(d.history)}
     ${plansSection(d.plans)}
+    ${churnSection(d.churn)}
+    ${sessionsTasksSection(d)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1396,6 +1440,8 @@ function renderDetail(d, opts) {
     ${signalsSection(d.signals)}
     ${commandsSection(d.history)}
     ${plansSection(d.plans)}
+    ${churnSection(d.churn)}
+    ${sessionsTasksSection(d)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1455,6 +1501,8 @@ function renderSession(d) {
     ${signalsSection(d.signals)}
     ${commandsSection(d.history)}
     ${plansSection(d.plans)}
+    ${churnSection(d.churn)}
+    ${sessionsTasksSection(d)}
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}

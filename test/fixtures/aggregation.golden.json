@@ -464,6 +464,27 @@
       "bytesInRange": 0,
       "recent": []
     },
+    "churn": {
+      "available": false,
+      "added": 0,
+      "removed": 0,
+      "net": 0,
+      "filesRevised": 0,
+      "revisions": 0,
+      "sessions": 0,
+      "skipped": 0
+    },
+    "concurrency": {
+      "maxConcurrent": 2,
+      "parallelSessions": 2,
+      "totalSessions": 3
+    },
+    "liveSessions": [],
+    "tasks": {
+      "available": false,
+      "total": 0,
+      "inRange": 0
+    },
     "worklog": {
       "from": "2023-01-01",
       "to": "2023-12-31",
@@ -915,6 +936,16 @@
       "activeDays": 0,
       "distinctCommands": 0,
       "topCommands": []
+    },
+    "churn": {
+      "available": false,
+      "added": 0,
+      "removed": 0,
+      "net": 0,
+      "filesRevised": 0,
+      "revisions": 0,
+      "sessions": 0,
+      "skipped": 0
     }
   }
 }

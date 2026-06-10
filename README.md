@@ -119,6 +119,16 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   `git commit` and `gh pr create` calls and the distinct files touched by Edit/Write —
   and derives cost-per-commit and cost-per-file. A rough activity proxy from tool calls
   (not a measure of value or quality), shown on every view.
+- **Code churn** — output *volume*, a step up from "files touched": approximate lines
+  added / removed / net and files-revised, from diffing consecutive file snapshots under
+  `~/.claude/file-history`. The diff is an order-insensitive line diff (a changed line
+  counts as one added + one removed; moves aren't tracked), so it's labeled approximate —
+  volume, not a quality measure. Global on the All-projects view, scoped to the project's
+  sessions on a per-project view.
+- **Sessions & tasks** — how parallel the work was: **max concurrent** sessions and how
+  many of the range's sessions **ran in parallel** (computed from session start/end
+  overlaps), plus a live snapshot of sessions **running now** (`~/.claude/sessions`, by
+  status) and the **background-task** count (`~/.claude/tasks`). All-projects view.
 - **Plan value** — for flat-fee (Max/Pro) users the dollar figure is hypothetical
   API-list-price usage, not a bill. Set your monthly plan fee and the All-projects view
   shows month-to-date API-equivalent usage as *leverage* over the fee (e.g. "13× your

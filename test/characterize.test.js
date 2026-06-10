@@ -91,6 +91,9 @@ process.env.PRICING_FILE = path.join(projectsDir, 'no-such-pricing.json'); // �
 process.env.CONFIG_FILE = path.join(projectsDir, 'no-such-config.json');   // → no budget / plan fee
 process.env.HISTORY_FILE = path.join(projectsDir, 'no-such-history.jsonl'); // → empty command analytics
 process.env.PLANS_DIR = path.join(projectsDir, 'no-such-plans');            // → empty plan analytics
+process.env.FILE_HISTORY_DIR = path.join(projectsDir, 'no-such-file-history'); // → empty churn
+process.env.SESSIONS_DIR = path.join(projectsDir, 'no-such-sessions');      // → no live sessions
+process.env.TASKS_DIR = path.join(projectsDir, 'no-such-tasks');            // → no background tasks
 delete process.env.CLAUDE_LEDGER_DATA;
 delete process.env.LEDGER_PERSIST;
 delete process.env.PLAN_MONTHLY_FEE;
@@ -135,6 +138,9 @@ test('the fixture exercises the full aggregation surface', () => {
   assert.equal(o.signals.compactions, 0, 'fixture has no compactions');
   assert.equal(o.history.available, false, 'no history.jsonl alongside the fixture');
   assert.equal(o.plans.available, false, 'no plans/ alongside the fixture');
+  assert.equal(o.churn.available, false, 'no file-history alongside the fixture');
+  assert.deepEqual(o.liveSessions, [], 'no live sessions registry alongside the fixture');
+  assert.equal(o.concurrency.totalSessions, 3, 'concurrency still computed from transcript intervals');
   assert.equal(o.reliability.totalErrors, 1, 'the failed Bash result is counted');
   assert.ok(o.reliability.wastedCost > 0, 'recovery spend after the error is priced');
   assert.deepEqual(o.output, { commits: 1, prs: 1, edits: 2, filesEdited: 2,
