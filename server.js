@@ -192,6 +192,16 @@ function hourOf(ts) {
   return 0;
 }
 
+// Validate a YYYY-MM-DD date param: well-formed AND a real calendar day, so
+// 2026-13-40 and 2026-02-30 are rejected rather than silently rolled over by
+// Date. An invalid value would otherwise slip into inRange's string compare and
+// quietly empty or skew every result, so the HTTP layer rejects it with a 400.
+function isValidDay(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 // The equal-length period immediately before [from, to]. Null for an unbounded range.
 function previousPeriod(from, to) {
   if (!from || !to) return null;
@@ -659,6 +669,21 @@ function dayOf(ts, fallback) {
   return (ts || fallback || '1970-01-01T00:00:00Z').slice(0, 10);
 }
 
+// Iterate the non-blank lines of a (possibly large) transcript without the
+// up-front array that raw.split('\n') allocates for every line at once — peak
+// memory stays at the file string plus one line, which matters for big files.
+function forEachLine(raw, cb) {
+  let start = 0;
+  const n = raw.length;
+  while (start < n) {
+    let nl = raw.indexOf('\n', start);
+    if (nl === -1) nl = n;
+    const line = raw.slice(start, nl);
+    if (line.trim()) cb(line);
+    start = nl + 1;
+  }
+}
+
 function parseSession(filePath) {
   let stat;
   try {
@@ -680,6 +705,7 @@ function parseSession(filePath) {
     start: null,
     end: null,
     days: {}, // 'YYYY-MM-DD' -> { userPrompts, assistantMessages, toolUses, tools:{}, byFamily:{} }
+    parseErrors: 0, // malformed JSONL lines skipped — counted so the drop isn't silent
   };
 
   let raw;
@@ -729,13 +755,13 @@ function parseSession(filePath) {
   const toolNames = {};
   let pendingError = false;
 
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
+  forEachLine(raw, (line) => {
     let o;
     try {
       o = JSON.parse(line);
     } catch {
-      continue;
+      data.parseErrors += 1;
+      return;
     }
 
     if (o.cwd && !data.cwd) data.cwd = o.cwd;
@@ -813,8 +839,11 @@ function parseSession(filePath) {
         if (o.attributionMcpServer) addBundle(nestFam(day.byMcp, o.attributionMcpServer, family), bundle);
       }
     }
-  }
+  });
 
+  if (data.parseErrors > 0) {
+    console.warn(`[ledger] ${data.id}: skipped ${data.parseErrors} malformed transcript line(s)`);
+  }
   sessionCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, data });
   return data;
 }
@@ -983,6 +1012,109 @@ function aggregateSession(s, from, to) {
   return { byFamily, bySkill, byMcp, byModel, byEntry, tools, toolErrors, errorFollowup, editsByFile, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
 }
 
+// --- Shared aggregation -----------------------------------------------------
+// projectDetail() and overview() once reimplemented the same per-session fold
+// and finalize tail. They now share three pieces: an accumulator (token bundles
+// + counts + per-day chart + punchcard + latency + prev-period), foldSession()
+// to roll one session's in-range aggregate into it, and finalizeCommon() to turn
+// it into the output block both views return. Each function keeps only what's
+// unique to it (the session table; the project leaderboard + budget/plan/worklog).
+function newAccumulator() {
+  return {
+    grand: {}, prevGrand: {},
+    bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
+    tools: {}, toolErrors: {}, errorFollowup: {},
+    dayMap: {}, punch: emptyPunchGrid(), durations: [],
+    editsByFile: {},
+    userPrompts: 0, assistantMessages: 0, toolUses: 0,
+    commits: 0, prs: 0, edits: 0,
+    prevPrompts: 0, turnMs: 0, sessionCount: 0,
+    dataStart: null, dataEnd: null,
+  };
+}
+
+// Fold a session's previous-period aggregate into the accumulator. Independent
+// of the current range (a session can contribute to "prev" but not "current"),
+// so callers run it before the in-range has-check.
+function foldPrev(acc, pa) {
+  if (!pa || !pa.has) return;
+  acc.prevPrompts += pa.userPrompts;
+  for (const [fam, b] of Object.entries(pa.byFamily)) addBundle(famBundleIn(acc.prevGrand, fam), b);
+}
+
+// Fold a session's in-range aggregate (agg = aggregateSession(s, from, to), with
+// agg.has already confirmed) plus its per-day buckets into the accumulator.
+function foldSession(acc, s, agg, from, to) {
+  acc.sessionCount += 1;
+  acc.userPrompts += agg.userPrompts;
+  acc.assistantMessages += agg.assistantMessages;
+  acc.toolUses += agg.toolUses;
+  acc.commits += agg.commits;
+  acc.prs += agg.prs;
+  acc.edits += agg.edits;
+  for (const [n, c] of Object.entries(agg.editsByFile)) acc.editsByFile[n] = (acc.editsByFile[n] || 0) + c;
+  for (const [n, c] of Object.entries(agg.tools)) acc.tools[n] = (acc.tools[n] || 0) + c;
+  for (const [n, c] of Object.entries(agg.toolErrors)) acc.toolErrors[n] = (acc.toolErrors[n] || 0) + c;
+  for (const [fam, b] of Object.entries(agg.byFamily)) addBundle(famBundleIn(acc.grand, fam), b);
+  for (const [fam, b] of Object.entries(agg.errorFollowup)) addBundle(famBundleIn(acc.errorFollowup, fam), b);
+  mergeByName(acc.bySkill, agg.bySkill);
+  mergeByName(acc.byMcp, agg.byMcp);
+  mergeByName(acc.byModel, agg.byModel);
+  mergeByName(acc.byEntry, agg.byEntry);
+
+  // Per-day rollup: the daily chart, the punchcard, latency samples, and the
+  // span of days that actually carried activity.
+  for (const [day, d] of Object.entries(s.days)) {
+    if (!inRange(day, from, to)) continue;
+    if (!acc.dayMap[day]) acc.dayMap[day] = { byFamily: {}, messages: 0, userPrompts: 0 };
+    acc.dayMap[day].messages += d.assistantMessages;
+    acc.dayMap[day].userPrompts += d.userPrompts;
+    for (const [fam, b] of Object.entries(d.byFamily)) addBundle(famBundleIn(acc.dayMap[day].byFamily, fam), b);
+    accumulatePunchcard(acc.punch, day, d);
+    if (d.durations && d.durations.length) for (const x of d.durations) acc.durations.push(x);
+    acc.turnMs += d.turnMs || 0;
+    if (!acc.dataStart || day < acc.dataStart) acc.dataStart = day;
+    if (!acc.dataEnd || day > acc.dataEnd) acc.dataEnd = day;
+  }
+}
+
+// Turn an accumulator into the output block shared by both views. Each priced
+// stat is computed once here (the old code priced several of them twice — once
+// standalone, once inside the insights args); same numbers, half the work.
+function finalizeCommon(acc, prev) {
+  const totals = priceBundles(acc.grand);
+  const daily = Object.entries(acc.dayMap)
+    .map(([date, v]) => {
+      const pr = priceBundles(v.byFamily);
+      return { date, cost: pr.cost, costByFamily: pr.costByFamily, messages: v.messages, userPrompts: v.userPrompts };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const topTools = Object.entries(acc.tools)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+  const reliability = reliabilityStats(acc.tools, acc.toolErrors, acc.errorFollowup);
+  const time = timeStats(acc.durations, acc.userPrompts, totals.cost);
+  const topModels = pricedModels(acc.byModel);
+  const topEntrypoints = priceByName(acc.byEntry);
+  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(acc.prevGrand).cost, acc.userPrompts, acc.prevPrompts) : null;
+  const output = outputStats({ commits: acc.commits, prs: acc.prs, edits: acc.edits, editsByFile: acc.editsByFile }, totals.cost);
+  return {
+    totals,
+    daily,
+    topTools,
+    punchcard: pricePunchcard(acc.punch),
+    topModels,
+    topEntrypoints,
+    topSkills: priceByName(acc.bySkill),
+    topMcp: priceByName(acc.byMcp),
+    reliability,
+    time,
+    efficiency: efficiencyStats(acc.grand, acc.userPrompts, acc.toolUses),
+    output,
+    delta,
+  };
+}
+
 // --- Project-level aggregation ---------------------------------------------
 function projectDetail(folder, from, to) {
   const projectPath = resolveProjectDir(folder);
@@ -1000,86 +1132,20 @@ function projectDetail(folder, from, to) {
   for (const s of archivedFor(folder, liveIds)) items.push({ s, live: false });
   if (items.length === 0) return null;
 
-  const grand = {}; // family -> bundle
-  const bySkill = {}; // skill name -> family -> bundle
-  const byMcp = {}; // mcp server name -> family -> bundle
-  const byModel = {}; // exact model id -> family -> bundle
-  const byEntry = {}; // entrypoint (cli/sdk-cli) -> family -> bundle
-  const tools = {};
-  const toolErrors = {};
-  const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
-  const dayMap = {}; // date -> { byFamily, messages, userPrompts }
-  const punch = emptyPunchGrid(); // [weekday][hour] activity, priced at the end
-  const durations = []; // turn-latency samples (ms) in range
   const prev = previousPeriod(from, to);
-  const prevGrand = {};
-  let prevPrompts = 0;
+  const acc = newAccumulator();
   let cwd = null;
   let gitBranch = null;
-  let userPrompts = 0;
-  let assistantMessages = 0;
-  let toolUses = 0;
-  let commits = 0;
-  let prs = 0;
-  let edits = 0;
-  const editsByFile = {};
-  let sessionsInRange = 0;
-  let dataStart = null;
-  let dataEnd = null;
-  const sessions = [];
+  const sessions = []; // the per-session table (live sessions only — see below)
 
   for (const { s, live } of items) {
     if (s.cwd && !cwd) cwd = s.cwd;
     if (s.gitBranch && !gitBranch) gitBranch = s.gitBranch;
 
-    if (prev) {
-      const pa = aggregateSession(s, prev.from, prev.to);
-      if (pa.has) {
-        prevPrompts += pa.userPrompts;
-        for (const [fam, b] of Object.entries(pa.byFamily)) {
-          if (!prevGrand[fam]) prevGrand[fam] = emptyBundle();
-          addBundle(prevGrand[fam], b);
-        }
-      }
-    }
-
+    foldPrev(acc, prev ? aggregateSession(s, prev.from, prev.to) : null);
     const agg = aggregateSession(s, from, to);
     if (!agg.has) continue;
-    sessionsInRange += 1;
-    userPrompts += agg.userPrompts;
-    assistantMessages += agg.assistantMessages;
-    toolUses += agg.toolUses;
-    commits += agg.commits;
-    prs += agg.prs;
-    edits += agg.edits;
-    for (const [n, c] of Object.entries(agg.editsByFile)) editsByFile[n] = (editsByFile[n] || 0) + c;
-    for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
-    for (const [n, c] of Object.entries(agg.toolErrors)) toolErrors[n] = (toolErrors[n] || 0) + c;
-    for (const [fam, b] of Object.entries(agg.byFamily)) {
-      if (!grand[fam]) grand[fam] = emptyBundle();
-      addBundle(grand[fam], b);
-    }
-    for (const [fam, b] of Object.entries(agg.errorFollowup)) addBundle(famBundleIn(errorFollowup, fam), b);
-    mergeByName(bySkill, agg.bySkill);
-    mergeByName(byMcp, agg.byMcp);
-    mergeByName(byModel, agg.byModel);
-    mergeByName(byEntry, agg.byEntry);
-
-    // Per-day rollup for the chart.
-    for (const [day, d] of Object.entries(s.days)) {
-      if (!inRange(day, from, to)) continue;
-      if (!dayMap[day]) dayMap[day] = { byFamily: {}, messages: 0, userPrompts: 0 };
-      dayMap[day].messages += d.assistantMessages;
-      dayMap[day].userPrompts += d.userPrompts;
-      for (const [fam, b] of Object.entries(d.byFamily)) {
-        if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
-        addBundle(dayMap[day].byFamily[fam], b);
-      }
-      accumulatePunchcard(punch, day, d);
-      if (d.durations && d.durations.length) for (const x of d.durations) durations.push(x);
-      if (!dataStart || day < dataStart) dataStart = day;
-      if (!dataEnd || day > dataEnd) dataEnd = day;
-    }
+    foldSession(acc, s, agg, from, to);
 
     if (!live) continue; // archived sessions count in totals but aren't clickable (transcript is gone)
     const priced = priceBundles(agg.byFamily);
@@ -1098,19 +1164,8 @@ function projectDetail(folder, from, to) {
     });
   }
 
-  const totals = priceBundles(grand);
-  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(prevGrand).cost, userPrompts, prevPrompts) : null;
+  const c = finalizeCommon(acc, prev);
   sessions.sort((a, b) => (b.end || '').localeCompare(a.end || ''));
-
-  const daily = Object.entries(dayMap)
-    .map(([date, v]) => {
-      const pr = priceBundles(v.byFamily);
-      return { date, cost: pr.cost, costByFamily: pr.costByFamily, messages: v.messages, userPrompts: v.userPrompts };
-    })
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const topTools = Object.entries(tools)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
 
   return {
     id: folder,
@@ -1118,37 +1173,37 @@ function projectDetail(folder, from, to) {
     cwd: cwd || projectName(folder, null),
     gitBranch,
     totals: {
-      cost: totals.cost,
-      costByFamily: totals.costByFamily,
-      tokens: totals.tokens,
-      models: totals.models,
-      userPrompts,
-      assistantMessages,
-      toolUses,
-      sessions: sessionsInRange,
+      cost: c.totals.cost,
+      costByFamily: c.totals.costByFamily,
+      tokens: c.totals.tokens,
+      models: c.totals.models,
+      userPrompts: acc.userPrompts,
+      assistantMessages: acc.assistantMessages,
+      toolUses: acc.toolUses,
+      sessions: acc.sessionCount,
       sessionsTotal: items.length,
-      start: dataStart,
-      end: dataEnd,
+      start: acc.dataStart,
+      end: acc.dataEnd,
     },
-    cacheSavings: totals.cacheSavings,
+    cacheSavings: c.totals.cacheSavings,
     perSession: {
-      cost: sessionsInRange ? totals.cost / sessionsInRange : 0,
-      prompt: userPrompts ? totals.cost / userPrompts : 0,
+      cost: acc.sessionCount ? c.totals.cost / acc.sessionCount : 0,
+      prompt: acc.userPrompts ? c.totals.cost / acc.userPrompts : 0,
     },
-    daily,
-    punchcard: pricePunchcard(punch),
-    topTools,
-    topModels: pricedModels(byModel),
-    topEntrypoints: priceByName(byEntry),
-    topSkills: priceByName(bySkill),
-    topMcp: priceByName(byMcp),
-    reliability: reliabilityStats(tools, toolErrors, errorFollowup),
-    time: timeStats(durations, userPrompts, totals.cost),
+    daily: c.daily,
+    punchcard: c.punchcard,
+    topTools: c.topTools,
+    topModels: c.topModels,
+    topEntrypoints: c.topEntrypoints,
+    topSkills: c.topSkills,
+    topMcp: c.topMcp,
+    reliability: c.reliability,
+    time: c.time,
     sessions,
-    delta,
-    efficiency: efficiencyStats(grand, userPrompts, toolUses),
-    output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
-    insights: computeInsights({ totals: { cost: totals.cost }, daily, sessions, delta, time: timeStats(durations, userPrompts, totals.cost), reliability: reliabilityStats(tools, toolErrors, errorFollowup), topModels: pricedModels(byModel), topEntrypoints: priceByName(byEntry) }),
+    delta: c.delta,
+    efficiency: c.efficiency,
+    output: c.output,
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
   };
 }
 
@@ -1161,34 +1216,12 @@ function overview(from, to) {
     return null;
   }
 
-  const grand = {};
-  const bySkill = {}; // skill name -> family -> bundle
-  const byMcp = {}; // mcp server name -> family -> bundle
-  const byModel = {}; // exact model id -> family -> bundle
-  const byEntry = {}; // entrypoint (cli/sdk-cli) -> family -> bundle
-  const tools = {};
-  const toolErrors = {};
-  const errorFollowup = {}; // family -> bundle (recovery spend after failed tools)
-  const dayMap = {};
-  const punch = emptyPunchGrid(); // [weekday][hour] activity across all projects
-  const durations = []; // turn-latency samples (ms) across all projects in range
-  const monthGrand = {}; // month-to-date tokens, independent of the selected range
   const M = currentMonthInfo();
   const prev = previousPeriod(from, to); // equal-length window before [from,to]
-  const prevGrand = {};
-  let prevPrompts = 0;
-  let userPrompts = 0;
-  let assistantMessages = 0;
-  let toolUses = 0;
-  let commits = 0;
-  let prs = 0;
-  let edits = 0;
-  const editsByFile = {};
-  const themeWords = {}; // word frequency across session titles, for work-log themes
-  let sessionCount = 0;
+  const gacc = newAccumulator();         // global totals across all projects
+  const monthGrand = {};                 // month-to-date tokens, independent of the range
+  const themeWords = {};                 // title-word frequency for work-log themes
   let projectCount = 0;
-  let dataStart = null;
-  let dataEnd = null;
   const projects = [];
   const scanned = []; // live sessions to persist to the rollup store
 
@@ -1209,17 +1242,9 @@ function overview(from, to) {
     for (const s of archivedFor(e.name, liveIds)) items.push(s);
     if (items.length === 0) continue;
 
-    const pGrand = {};
-    const pPrevGrand = {};
-    let pSessions = 0;
-    let pPrompts = 0;
-    let pTurnMs = 0;
+    const pacc = newAccumulator(); // this project's slice; merged-by-folding below
     let cwd = null;
     let lastActive = null;
-    let active = false;
-    let pCommits = 0;
-    let pPrs = 0;
-    const pEditsByFile = {};
     const pTitles = []; // { title, cost } — work-log highlights for this project
 
     for (const s of items) {
@@ -1229,94 +1254,41 @@ function overview(from, to) {
       // Month-to-date aggregation (independent of the selected range).
       for (const [day, d] of Object.entries(s.days)) {
         if (day >= M.monthStart && day <= M.today) {
-          for (const [fam, b] of Object.entries(d.byFamily)) {
-            if (!monthGrand[fam]) monthGrand[fam] = emptyBundle();
-            addBundle(monthGrand[fam], b);
-          }
+          for (const [fam, b] of Object.entries(d.byFamily)) addBundle(famBundleIn(monthGrand, fam), b);
         }
       }
 
-      // Previous-period aggregation (for deltas), independent of current range.
-      if (prev) {
-        const pa = aggregateSession(s, prev.from, prev.to);
-        if (pa.has) {
-          prevPrompts += pa.userPrompts;
-          for (const [fam, b] of Object.entries(pa.byFamily)) {
-            if (!prevGrand[fam]) prevGrand[fam] = emptyBundle();
-            addBundle(prevGrand[fam], b);
-            if (!pPrevGrand[fam]) pPrevGrand[fam] = emptyBundle();
-            addBundle(pPrevGrand[fam], b);
-          }
-        }
-      }
-
+      // Fold each session into both this project's accumulator and the global
+      // one (agg computed once, reused). Prev-period folds regardless of range.
+      const pa = prev ? aggregateSession(s, prev.from, prev.to) : null;
+      foldPrev(pacc, pa);
+      foldPrev(gacc, pa);
       const agg = aggregateSession(s, from, to);
       if (!agg.has) continue;
-      active = true;
-      pSessions += 1;
-      pPrompts += agg.userPrompts;
-      for (const [fam, b] of Object.entries(agg.byFamily)) {
-        if (!pGrand[fam]) pGrand[fam] = emptyBundle();
-        addBundle(pGrand[fam], b);
-        if (!grand[fam]) grand[fam] = emptyBundle();
-        addBundle(grand[fam], b);
-      }
-      for (const [n, c] of Object.entries(agg.tools)) tools[n] = (tools[n] || 0) + c;
-      for (const [n, c] of Object.entries(agg.toolErrors)) toolErrors[n] = (toolErrors[n] || 0) + c;
-      for (const [fam, b] of Object.entries(agg.errorFollowup)) addBundle(famBundleIn(errorFollowup, fam), b);
-      mergeByName(bySkill, agg.bySkill);
-      mergeByName(byMcp, agg.byMcp);
-      mergeByName(byModel, agg.byModel);
-      mergeByName(byEntry, agg.byEntry);
-      userPrompts += agg.userPrompts;
-      assistantMessages += agg.assistantMessages;
-      toolUses += agg.toolUses;
-      commits += agg.commits;
-      prs += agg.prs;
-      edits += agg.edits;
-      for (const [n, c] of Object.entries(agg.editsByFile)) editsByFile[n] = (editsByFile[n] || 0) + c;
-      sessionCount += 1;
-      // Per-project output + work-log highlights (titles + recurring words).
-      pCommits += agg.commits;
-      pPrs += agg.prs;
-      for (const [n, c] of Object.entries(agg.editsByFile)) pEditsByFile[n] = (pEditsByFile[n] || 0) + c;
+      foldSession(pacc, s, agg, from, to);
+      foldSession(gacc, s, agg, from, to);
+
       const wlTitle = sessionTitle(s);
       pTitles.push({ title: wlTitle, cost: priceBundles(agg.byFamily).cost });
       if (wlTitle !== '(untitled)') for (const w of titleWords(wlTitle)) themeWords[w] = (themeWords[w] || 0) + 1;
-
-      for (const [day, d] of Object.entries(s.days)) {
-        if (!inRange(day, from, to)) continue;
-        if (!dayMap[day]) dayMap[day] = { byFamily: {}, messages: 0, userPrompts: 0 };
-        dayMap[day].messages += d.assistantMessages;
-        dayMap[day].userPrompts += d.userPrompts;
-        for (const [fam, b] of Object.entries(d.byFamily)) {
-          if (!dayMap[day].byFamily[fam]) dayMap[day].byFamily[fam] = emptyBundle();
-          addBundle(dayMap[day].byFamily[fam], b);
-        }
-        accumulatePunchcard(punch, day, d);
-        if (d.durations && d.durations.length) { for (const x of d.durations) durations.push(x); }
-        pTurnMs += d.turnMs || 0;
-        if (!dataStart || day < dataStart) dataStart = day;
-        if (!dataEnd || day > dataEnd) dataEnd = day;
-      }
     }
 
-    if (active) projectCount += 1;
-    const priced = priceBundles(pGrand);
-    const prevCost = prev ? priceBundles(pPrevGrand).cost : null;
+    if (pacc.sessionCount > 0) projectCount += 1;
+    const priced = priceBundles(pacc.grand);
+    const prevCost = prev ? priceBundles(pacc.prevGrand).cost : null;
     projects.push({
       id: e.name,
       name: projectName(e.name, cwd),
       cwd: cwd || projectName(e.name, null),
-      sessions: pSessions,
-      userPrompts: pPrompts,
+      sessions: pacc.sessionCount,
+      userPrompts: pacc.userPrompts,
       cost: priced.cost,
       cacheSavings: priced.cacheSavings,
-      turnMs: pTurnMs,
+      turnMs: pacc.turnMs,
       lastActive,
-      commits: pCommits,
-      prs: pPrs,
-      filesEdited: Object.keys(pEditsByFile).length,
+      commits: pacc.commits,
+      prs: pacc.prs,
+      filesEdited: Object.keys(pacc.editsByFile).length,
       topTitles: pTitles.sort((a, b) => b.cost - a.cost).slice(0, 3).map((t) => t.title),
       costPrev: prevCost,
       costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
@@ -1325,10 +1297,8 @@ function overview(from, to) {
 
   persistRollups(scanned);
 
-  const totals = priceBundles(grand);
+  const c = finalizeCommon(gacc, prev);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
-
-  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(prevGrand).cost, userPrompts, prevPrompts) : null;
 
   const monthPriced = priceBundles(monthGrand);
   const monthly = getMonthlyBudget();
@@ -1360,52 +1330,42 @@ function overview(from, to) {
     today: M.today,
   } : null;
 
-  const daily = Object.entries(dayMap)
-    .map(([date, v]) => {
-      const pr = priceBundles(v.byFamily);
-      return { date, cost: pr.cost, costByFamily: pr.costByFamily, messages: v.messages, userPrompts: v.userPrompts };
-    })
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const topTools = Object.entries(tools)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-
   return {
     projectCount,
     totals: {
-      cost: totals.cost,
-      costByFamily: totals.costByFamily,
-      tokens: totals.tokens,
-      models: totals.models,
-      userPrompts,
-      assistantMessages,
-      toolUses,
-      sessions: sessionCount,
-      start: dataStart,
-      end: dataEnd,
+      cost: c.totals.cost,
+      costByFamily: c.totals.costByFamily,
+      tokens: c.totals.tokens,
+      models: c.totals.models,
+      userPrompts: gacc.userPrompts,
+      assistantMessages: gacc.assistantMessages,
+      toolUses: gacc.toolUses,
+      sessions: gacc.sessionCount,
+      start: gacc.dataStart,
+      end: gacc.dataEnd,
     },
-    cacheSavings: totals.cacheSavings,
+    cacheSavings: c.totals.cacheSavings,
     perSession: {
-      cost: sessionCount ? totals.cost / sessionCount : 0,
-      prompt: userPrompts ? totals.cost / userPrompts : 0,
+      cost: gacc.sessionCount ? c.totals.cost / gacc.sessionCount : 0,
+      prompt: gacc.userPrompts ? c.totals.cost / gacc.userPrompts : 0,
     },
-    daily,
-    punchcard: pricePunchcard(punch),
-    topTools,
-    topModels: pricedModels(byModel),
-    topEntrypoints: priceByName(byEntry),
-    topSkills: priceByName(bySkill),
-    topMcp: priceByName(byMcp),
-    reliability: reliabilityStats(tools, toolErrors, errorFollowup),
-    time: timeStats(durations, userPrompts, totals.cost),
+    daily: c.daily,
+    punchcard: c.punchcard,
+    topTools: c.topTools,
+    topModels: c.topModels,
+    topEntrypoints: c.topEntrypoints,
+    topSkills: c.topSkills,
+    topMcp: c.topMcp,
+    reliability: c.reliability,
+    time: c.time,
     projects,
     budget,
     plan,
-    delta,
-    efficiency: efficiencyStats(grand, userPrompts, toolUses),
-    output: outputStats({ commits, prs, edits, editsByFile }, totals.cost),
-    insights: computeInsights({ totals: { cost: totals.cost }, daily, projects, delta, time: timeStats(durations, userPrompts, totals.cost), reliability: reliabilityStats(tools, toolErrors, errorFollowup), topModels: pricedModels(byModel), topEntrypoints: priceByName(byEntry) }),
-    worklog: buildWorkLog({ from, to, cost: totals.cost, sessions: sessionCount, output: outputStats({ commits, prs, edits, editsByFile }, totals.cost), time: timeStats(durations, userPrompts, totals.cost), projects, themes: topThemes(themeWords, 6) }),
+    delta: c.delta,
+    efficiency: c.efficiency,
+    output: c.output,
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
+    worklog: buildWorkLog({ from, to, cost: c.totals.cost, sessions: gacc.sessionCount, output: c.output, time: c.time, projects, themes: topThemes(themeWords, 6) }),
   };
 }
 
@@ -1526,13 +1486,14 @@ function sessionDetail(folder, sessionId) {
   let pendingError = false;
   let cumCost = 0;
 
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
+  let parseErrors = 0;
+  forEachLine(raw, (line) => {
     let o;
     try {
       o = JSON.parse(line);
     } catch {
-      continue;
+      parseErrors += 1;
+      return;
     }
     if (o.cwd && !out.cwd) out.cwd = o.cwd;
     if (o.gitBranch && !out.gitBranch) out.gitBranch = o.gitBranch;
@@ -1591,7 +1552,7 @@ function sessionDetail(folder, sessionId) {
         }
       }
     }
-  }
+  });
 
   const priced = priceBundles(grand);
   return {
@@ -1612,6 +1573,7 @@ function sessionDetail(folder, sessionId) {
       toolUses: Object.values(out.tools).reduce((a, b) => a + b, 0),
     },
     cacheSavings: priced.cacheSavings,
+    parseErrors,
     prompts: out.prompts,
     topTools: Object.entries(out.tools)
       .map(([name, count]) => ({ name, count }))
@@ -1715,6 +1677,9 @@ const server = http.createServer((req, res) => {
   const to = url.searchParams.get('to') || null;
 
   try {
+    if ((from && !isValidDay(from)) || (to && !isValidDay(to))) {
+      return sendJSON(res, 400, { error: 'invalid date parameter; expected YYYY-MM-DD' });
+    }
     if (pathname === '/api/projects') {
       const { projects, bounds } = listProjects(from, to);
       return sendJSON(res, 200, {
@@ -1812,6 +1777,7 @@ module.exports = {
   shiftDay,
   weekdayOf,
   hourOf,
+  isValidDay,
   previousPeriod,
   makeDelta,
   modelFamily,
@@ -1854,6 +1820,7 @@ module.exports = {
   listProjects,
   toCSV,
   csvCell,
+  server,
 };
 
 if (require.main !== module) return;

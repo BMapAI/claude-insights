@@ -1,0 +1,1296 @@
+{
+  "ov": {
+    "projectCount": 2,
+    "totals": {
+      "cost": 0.035635,
+      "costByFamily": {
+        "opus": 0.032875,
+        "sonnet": 0.0021000000000000003,
+        "haiku": 0.00066
+      },
+      "tokens": {
+        "input": 2400,
+        "output": 950,
+        "cacheRead": 2100,
+        "cacheWrite": 400
+      },
+      "models": [
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "userPrompts": 3,
+      "assistantMessages": 4,
+      "toolUses": 5,
+      "sessions": 3,
+      "start": "2023-03-10",
+      "end": "2023-03-11"
+    },
+    "cacheSavings": 0.00909,
+    "perSession": {
+      "cost": 0.011878333333333333,
+      "prompt": 0.011878333333333333
+    },
+    "daily": [
+      {
+        "date": "2023-03-10",
+        "cost": 0.034975,
+        "costByFamily": {
+          "opus": 0.032875,
+          "sonnet": 0.0021000000000000003
+        },
+        "messages": 3,
+        "userPrompts": 2
+      },
+      {
+        "date": "2023-03-11",
+        "cost": 0.00066,
+        "costByFamily": {
+          "haiku": 0.00066
+        },
+        "messages": 1,
+        "userPrompts": 1
+      }
+    ],
+    "punchcard": {
+      "cost": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.034975,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.00066,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "messages": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    },
+    "topTools": [
+      {
+        "name": "Bash",
+        "count": 2
+      },
+      {
+        "name": "Edit",
+        "count": 1
+      },
+      {
+        "name": "Write",
+        "count": 1
+      },
+      {
+        "name": "Read",
+        "count": 1
+      }
+    ],
+    "topModels": [
+      {
+        "name": "claude-opus-4-8",
+        "cost": 0.032875,
+        "tokens": 5000,
+        "unknown": false
+      },
+      {
+        "name": "claude-sonnet-4-6",
+        "cost": 0.0021000000000000003,
+        "tokens": 300,
+        "unknown": false
+      },
+      {
+        "name": "claude-haiku-4-5",
+        "cost": 0.00066,
+        "tokens": 550,
+        "unknown": false
+      }
+    ],
+    "topEntrypoints": [
+      {
+        "name": "cli",
+        "cost": 0.034975,
+        "tokens": 5300
+      },
+      {
+        "name": "sdk-cli",
+        "cost": 0.00066,
+        "tokens": 550
+      }
+    ],
+    "topSkills": [
+      {
+        "name": "code-review",
+        "cost": 0.021375000000000005,
+        "tokens": 3900
+      }
+    ],
+    "topMcp": [
+      {
+        "name": "github",
+        "cost": 0.00066,
+        "tokens": 550
+      }
+    ],
+    "reliability": {
+      "totalCalls": 5,
+      "totalErrors": 1,
+      "errorRate": 0.2,
+      "wastedCost": 0.0021000000000000003,
+      "byTool": [
+        {
+          "name": "Bash",
+          "calls": 2,
+          "errors": 1,
+          "rate": 0.5
+        }
+      ]
+    },
+    "time": {
+      "turns": 4,
+      "totalMs": 55000,
+      "avgMs": 13750,
+      "medianMs": 12000,
+      "p90Ms": 30000,
+      "perPromptMs": 18333.333333333332,
+      "costPerHour": 2.3324727272727275,
+      "hist": [
+        {
+          "label": "<10s",
+          "count": 2
+        },
+        {
+          "label": "10–30s",
+          "count": 1
+        },
+        {
+          "label": "30–60s",
+          "count": 1
+        },
+        {
+          "label": "1–3m",
+          "count": 0
+        },
+        {
+          "label": "3–10m",
+          "count": 0
+        },
+        {
+          "label": ">10m",
+          "count": 0
+        }
+      ]
+    },
+    "projects": [
+      {
+        "id": "-home-demo-alpha",
+        "name": "alpha",
+        "cwd": "/home/demo/alpha",
+        "sessions": 2,
+        "userPrompts": 2,
+        "cost": 0.024135000000000007,
+        "cacheSavings": 0.00909,
+        "turnMs": 50000,
+        "lastActive": "2023-03-11T14:00:12.000Z",
+        "commits": 1,
+        "prs": 1,
+        "filesEdited": 2,
+        "topTitles": [
+          "Refactor the parser",
+          "Add more tests"
+        ],
+        "costPrev": 0,
+        "costPct": null
+      },
+      {
+        "id": "-home-demo-beta",
+        "name": "beta",
+        "cwd": "/home/demo/beta",
+        "sessions": 1,
+        "userPrompts": 1,
+        "cost": 0.0115,
+        "cacheSavings": 0,
+        "turnMs": 5000,
+        "lastActive": "2023-03-10T14:00:15.000Z",
+        "commits": 0,
+        "prs": 0,
+        "filesEdited": 0,
+        "topTitles": [
+          "Beta investigation"
+        ],
+        "costPrev": 0,
+        "costPct": null
+      }
+    ],
+    "budget": {
+      "monthly": null,
+      "monthStart": "2026-06-01",
+      "today": "2026-06-10",
+      "daysElapsed": 10,
+      "daysInMonth": 30,
+      "mtdCost": 0,
+      "projectedCost": 0,
+      "remaining": null,
+      "pctUsed": null,
+      "pctProjected": null
+    },
+    "plan": null,
+    "delta": {
+      "prevFrom": "2022-01-01",
+      "prevTo": "2022-12-31",
+      "days": 365,
+      "prevCost": 0,
+      "costChange": 0.035635,
+      "costPct": null,
+      "prevPrompts": 0,
+      "promptsChange": 3,
+      "promptsPct": null
+    },
+    "efficiency": {
+      "cost": 0.035635,
+      "cacheHitRate": 0.42857142857142855,
+      "blendedPerMtok": 6.091452991452992,
+      "outputShare": 0.1623931623931624,
+      "tokensPerPrompt": 1950,
+      "toolsPerPrompt": 1.6666666666666667,
+      "composition": {
+        "output": 0.021750000000000002,
+        "input": 0.01,
+        "cacheRead": 0.00101,
+        "cacheWrite": 0.0028750000000000004
+      },
+      "whatIf": {
+        "opus": 0.03967500000000001,
+        "sonnet": 0.023805,
+        "haiku": 0.007935000000000001
+      }
+    },
+    "output": {
+      "commits": 1,
+      "prs": 1,
+      "edits": 2,
+      "filesEdited": 2,
+      "costPerCommit": 0.035635,
+      "costPerFile": 0.0178175
+    },
+    "insights": [
+      {
+        "kind": "concentration",
+        "sev": 0.024135000000000007,
+        "tone": "info",
+        "title": "Concentrated spend",
+        "detail": "alpha is 68% of all spend ($0.02)."
+      }
+    ],
+    "worklog": {
+      "from": "2023-01-01",
+      "to": "2023-12-31",
+      "cost": 0.035635,
+      "activeMs": 55000,
+      "sessions": 3,
+      "projectCount": 2,
+      "commits": 1,
+      "prs": 1,
+      "filesEdited": 2,
+      "themes": [],
+      "projects": [
+        {
+          "name": "alpha",
+          "commits": 1,
+          "prs": 1,
+          "filesEdited": 2,
+          "sessions": 2,
+          "cost": 0.024135000000000007,
+          "titles": [
+            "Refactor the parser",
+            "Add more tests"
+          ]
+        },
+        {
+          "name": "beta",
+          "commits": 0,
+          "prs": 0,
+          "filesEdited": 0,
+          "sessions": 1,
+          "cost": 0.0115,
+          "titles": [
+            "Beta investigation"
+          ]
+        }
+      ]
+    }
+  },
+  "pd": {
+    "id": "-home-demo-alpha",
+    "name": "alpha",
+    "cwd": "/home/demo/alpha",
+    "gitBranch": "main",
+    "totals": {
+      "cost": 0.024135000000000007,
+      "costByFamily": {
+        "opus": 0.021375000000000005,
+        "sonnet": 0.0021000000000000003,
+        "haiku": 0.00066
+      },
+      "tokens": {
+        "input": 1600,
+        "output": 650,
+        "cacheRead": 2100,
+        "cacheWrite": 400
+      },
+      "models": [
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "userPrompts": 2,
+      "assistantMessages": 3,
+      "toolUses": 4,
+      "sessions": 2,
+      "sessionsTotal": 2,
+      "start": "2023-03-10",
+      "end": "2023-03-11"
+    },
+    "cacheSavings": 0.00909,
+    "perSession": {
+      "cost": 0.012067500000000004,
+      "prompt": 0.012067500000000004
+    },
+    "daily": [
+      {
+        "date": "2023-03-10",
+        "cost": 0.023475000000000006,
+        "costByFamily": {
+          "opus": 0.021375000000000005,
+          "sonnet": 0.0021000000000000003
+        },
+        "messages": 2,
+        "userPrompts": 1
+      },
+      {
+        "date": "2023-03-11",
+        "cost": 0.00066,
+        "costByFamily": {
+          "haiku": 0.00066
+        },
+        "messages": 1,
+        "userPrompts": 1
+      }
+    ],
+    "punchcard": {
+      "cost": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.023475000000000006,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.00066,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "messages": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    },
+    "topTools": [
+      {
+        "name": "Bash",
+        "count": 2
+      },
+      {
+        "name": "Edit",
+        "count": 1
+      },
+      {
+        "name": "Write",
+        "count": 1
+      }
+    ],
+    "topModels": [
+      {
+        "name": "claude-opus-4-8",
+        "cost": 0.021375000000000005,
+        "tokens": 3900,
+        "unknown": false
+      },
+      {
+        "name": "claude-sonnet-4-6",
+        "cost": 0.0021000000000000003,
+        "tokens": 300,
+        "unknown": false
+      },
+      {
+        "name": "claude-haiku-4-5",
+        "cost": 0.00066,
+        "tokens": 550,
+        "unknown": false
+      }
+    ],
+    "topEntrypoints": [
+      {
+        "name": "cli",
+        "cost": 0.023475000000000006,
+        "tokens": 4200
+      },
+      {
+        "name": "sdk-cli",
+        "cost": 0.00066,
+        "tokens": 550
+      }
+    ],
+    "topSkills": [
+      {
+        "name": "code-review",
+        "cost": 0.021375000000000005,
+        "tokens": 3900
+      }
+    ],
+    "topMcp": [
+      {
+        "name": "github",
+        "cost": 0.00066,
+        "tokens": 550
+      }
+    ],
+    "reliability": {
+      "totalCalls": 4,
+      "totalErrors": 1,
+      "errorRate": 0.25,
+      "wastedCost": 0.0021000000000000003,
+      "byTool": [
+        {
+          "name": "Bash",
+          "calls": 2,
+          "errors": 1,
+          "rate": 0.5
+        }
+      ]
+    },
+    "time": {
+      "turns": 3,
+      "totalMs": 50000,
+      "avgMs": 16666.666666666668,
+      "medianMs": 12000,
+      "p90Ms": 30000,
+      "perPromptMs": 25000,
+      "costPerHour": 1.7377200000000006,
+      "hist": [
+        {
+          "label": "<10s",
+          "count": 1
+        },
+        {
+          "label": "10–30s",
+          "count": 1
+        },
+        {
+          "label": "30–60s",
+          "count": 1
+        },
+        {
+          "label": "1–3m",
+          "count": 0
+        },
+        {
+          "label": "3–10m",
+          "count": 0
+        },
+        {
+          "label": ">10m",
+          "count": 0
+        }
+      ]
+    },
+    "sessions": [
+      {
+        "id": "sA2",
+        "title": "Add more tests",
+        "firstPrompt": "Add more tests for coverage",
+        "cost": 0.00066,
+        "userPrompts": 1,
+        "assistantMessages": 1,
+        "toolUses": 1,
+        "tokens": {
+          "input": 400,
+          "output": 50,
+          "cacheRead": 100,
+          "cacheWrite": 0
+        },
+        "models": [
+          "haiku"
+        ],
+        "start": "2023-03-11T14:00:00.000Z",
+        "end": "2023-03-11T14:00:12.000Z"
+      },
+      {
+        "id": "sA1",
+        "title": "Refactor the parser",
+        "firstPrompt": "Refactor the parser please",
+        "cost": 0.023475000000000006,
+        "userPrompts": 1,
+        "assistantMessages": 2,
+        "toolUses": 3,
+        "tokens": {
+          "input": 1200,
+          "output": 600,
+          "cacheRead": 2000,
+          "cacheWrite": 400
+        },
+        "models": [
+          "opus",
+          "sonnet"
+        ],
+        "start": "2023-03-10T14:00:00.000Z",
+        "end": "2023-03-10T14:00:22.000Z"
+      }
+    ],
+    "delta": {
+      "prevFrom": "2022-01-01",
+      "prevTo": "2022-12-31",
+      "days": 365,
+      "prevCost": 0,
+      "costChange": 0.024135000000000007,
+      "costPct": null,
+      "prevPrompts": 0,
+      "promptsChange": 2,
+      "promptsPct": null
+    },
+    "efficiency": {
+      "cost": 0.024135000000000007,
+      "cacheHitRate": 0.5121951219512195,
+      "blendedPerMtok": 5.081052631578949,
+      "outputShare": 0.1368421052631579,
+      "tokensPerPrompt": 2375,
+      "toolsPerPrompt": 2,
+      "composition": {
+        "output": 0.01425,
+        "input": 0.006,
+        "cacheRead": 0.00101,
+        "cacheWrite": 0.0028750000000000004
+      },
+      "whatIf": {
+        "opus": 0.028175,
+        "sonnet": 0.016905,
+        "haiku": 0.005635
+      }
+    },
+    "output": {
+      "commits": 1,
+      "prs": 1,
+      "edits": 2,
+      "filesEdited": 2,
+      "costPerCommit": 0.024135000000000007,
+      "costPerFile": 0.012067500000000004
+    },
+    "insights": []
+  }
+}

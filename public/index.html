@@ -185,6 +185,22 @@
   .prompt { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel-2); }
   .prompt .when { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
   .prompt .text { white-space: pre-wrap; word-break: break-word; font-size: 13px; max-height: 220px; overflow: auto; }
+
+  /* Narrow screens: stack the sidebar above the content instead of a fixed
+     320px full-height column, ease the heavy horizontal padding, and let the
+     page scroll as one document rather than two independent 100vh panes. The
+     heatmap already lives in an overflow-x:auto wrapper, so it scrolls in place. */
+  @media (max-width: 720px) {
+    html, body { height: auto; }
+    body { flex-direction: column; min-height: 100%; }
+    #sidebar { width: 100%; min-width: 0; height: auto; max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--border); }
+    #main { height: auto; }
+    .inner { padding: 0 16px 24px; }
+    #filterbar { padding: 12px 16px; gap: 10px; }
+    .cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .insight-list, .effgrid { grid-template-columns: 1fr; }
+    .title-cell { max-width: 200px; }
+  }
 </style>
 </head>
 <body>
@@ -851,7 +867,12 @@ async function refresh(silent) {
     }
     if (silent && main) main.scrollTop = scroll;
   } catch (e) {
-    if (!silent) detail.innerHTML = '<div class="loading" style="margin-top:24px">Failed to load (' + esc(e.message) + ').</div>';
+    if (!silent) {
+      detail.innerHTML = '<div class="loading" style="margin-top:24px">Failed to load (' + esc(e.message) +
+        '). <button type="button" id="retry-btn" style="margin-left:8px;padding:5px 13px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font:inherit;cursor:pointer">Retry</button></div>';
+      const rb = document.getElementById('retry-btn');
+      if (rb) rb.addEventListener('click', () => refresh());
+    }
   }
 }
 
@@ -1031,6 +1052,7 @@ function renderSession(d) {
       <h2>${esc(d.title)}</h2>
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
+    ${d.parseErrors > 0 ? `<div class="section" style="border-color:var(--warn)"><div class="hint" style="color:var(--warn)">⚠ ${fmtNum(d.parseErrors)} malformed line${d.parseErrors === 1 ? '' : 's'} in this transcript were skipped — totals here may undercount.</div></div>` : ''}
     ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${fmtDate(d.start)}</div></div>
