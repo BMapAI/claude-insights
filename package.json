@@ -35,6 +35,6 @@
     "url": "git+https://github.com/BMapAI/claude-ledger.git"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

@@ -146,7 +146,7 @@ Recommended setup on a shared box:
    # then open http://localhost:4317
    ```
 
-**Prerequisite:** each user needs **Node 18+** on their `PATH` (a per-user nvm
+**Prerequisite:** each user needs **Node 22+** on their `PATH` (a per-user nvm
 install or a system-wide Node).
 
 > Setting `HOST=0.0.0.0` exposes the dashboard — including your prompt text and
