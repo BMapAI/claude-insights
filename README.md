@@ -291,19 +291,6 @@ commits, and files edited. Read-only like the rest of the app.
   (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).
 
-## Regenerating the screenshot
-
-`docs/overview.png` is generated from **synthetic** demo data (no real prompts or
-costs) so it can showcase every panel. With Node and a Chrome/Chromium binary on
-your PATH:
-
-```bash
-bash tools/shoot.sh
-```
-
-`tools/gen-demo.js` writes throwaway transcripts to a temp dir; `tools/shoot.sh`
-serves them (with a demo budget + plan fee) and screenshots the dashboard.
-
 ## License
 
 MIT
