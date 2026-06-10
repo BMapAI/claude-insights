@@ -541,6 +541,67 @@ function onLeadHeader(key) {
   renderLeaderboard();
 }
 
+// --- Tool reliability table sorting -----------------------------------------
+const REL_COLS = [
+  { key: 'name', label: 'Tool', num: false },
+  { key: 'errors', label: 'Errors', num: true },
+  { key: 'calls', label: 'Calls', num: true },
+  { key: 'rate', label: 'Rate', num: true },
+  { key: null, label: '', num: true }, // error-rate share bar — visual only
+];
+let relData = [];
+let relSort = { key: 'errors', dir: 'desc' };
+function relSortVal(t, key) {
+  if (key === 'name') return (t.name || '').toLowerCase();
+  return t[key] || 0;
+}
+function renderReliability() {
+  const body = document.getElementById('rel-body');
+  if (!body) return;
+  const { key, dir } = relSort;
+  const rows = relData.slice().sort((a, b) => {
+    const va = relSortVal(a, key), vb = relSortVal(b, key);
+    let cmp;
+    if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb));
+    return dir === 'asc' ? cmp : -cmp;
+  }).slice(0, 20);
+  body.innerHTML = rows.map((t) =>
+    `<tr>
+       <td>${esc(t.name)}</td>
+       <td class="num">${fmtNum(t.errors)}</td>
+       <td class="num">${fmtNum(t.calls)}</td>
+       <td class="num">${(t.rate * 100).toFixed(1)}%</td>
+       <td class="num"><span class="share"><span class="share-fill" style="width:${Math.min(t.rate * 100, 100).toFixed(1)}%;background:var(--warn)"></span></span></td>
+     </tr>`).join('');
+  document.querySelectorAll('#rel-head th').forEach((th) => {
+    const active = th.dataset.key && th.dataset.key === key;
+    th.classList.toggle('sorted', !!active);
+    if (th.dataset.key) th.setAttribute('aria-sort', active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none');
+    const arrow = th.querySelector('.arrow');
+    if (arrow) arrow.textContent = active ? (dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+function onRelHeader(key) {
+  if (!key) return;
+  if (relSort.key === key) relSort.dir = relSort.dir === 'asc' ? 'desc' : 'asc';
+  else relSort = { key, dir: key === 'name' ? 'asc' : 'desc' };
+  renderReliability();
+}
+// Wire the reliability header (present only when there are tool errors in range)
+// and fill its body. `preserve` keeps the user's chosen sort across live refresh.
+function wireReliability(preserve) {
+  const head = document.getElementById('rel-head');
+  if (!head) return;
+  if (!preserve) relSort = { key: 'errors', dir: 'desc' };
+  head.querySelectorAll('th').forEach((th) => {
+    const go = () => onRelHeader(th.dataset.key);
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && th.dataset.key) { e.preventDefault(); go(); } });
+  });
+  renderReliability();
+}
+
 // --- Shared render helpers --------------------------------------------------
 function modelSplit(costByFamily, total) {
   const fams = Object.entries(costByFamily).sort((a, b) => b[1] - a[1]);
@@ -771,15 +832,12 @@ function timeSection(t) {
 // Tool reliability: error rate, recovery spend, and a per-tool error breakdown.
 function reliabilitySection(r, totalCost) {
   if (!r || !r.totalCalls) return '';
+  relData = r.byTool || []; // client-side sort source for renderReliability()
   const wastedPct = totalCost > 0 ? (r.wastedCost / totalCost * 100) : 0;
-  const rows = r.byTool.slice(0, 20).map((t) =>
-    `<tr>
-       <td>${esc(t.name)}</td>
-       <td class="num">${fmtNum(t.errors)}</td>
-       <td class="num">${fmtNum(t.calls)}</td>
-       <td class="num">${(t.rate * 100).toFixed(1)}%</td>
-       <td class="num"><span class="share"><span class="share-fill" style="width:${Math.min(t.rate * 100, 100).toFixed(1)}%;background:var(--warn)"></span></span></td>
-     </tr>`).join('');
+  const head = REL_COLS.map((c) => {
+    const s = c.key !== null;
+    return `<th class="${s ? 'sortable ' : ''}${c.num ? 'num' : ''}" scope="col"${s ? ` data-key="${c.key}" tabindex="0" aria-sort="none"` : ''}>${c.label}${s ? '<span class="arrow" aria-hidden="true"></span>' : ''}</th>`;
+  }).join('');
   return `<div class="section">
     <h3>Tool reliability</h3>
     <div class="effgrid">
@@ -789,7 +847,7 @@ function reliabilitySection(r, totalCost) {
       <div class="eff"><div class="label">Recovery share</div><div class="value">${wastedPct.toFixed(1)}%</div></div>
     </div>
     ${r.byTool.length
-      ? `<table style="margin-top:16px"><thead><tr><th>Tool</th><th class="num">Errors</th><th class="num">Calls</th><th class="num">Rate</th><th class="num"></th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<table style="margin-top:16px"><thead><tr id="rel-head">${head}</tr></thead><tbody id="rel-body"></tbody></table>`
       : '<div class="hint" style="margin-top:12px">No tool errors in range. 🎉</div>'}
     <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
   </div>`;
@@ -1172,6 +1230,7 @@ function renderOverview(d, opts) {
     th.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && th.dataset.key) { e.preventDefault(); go(); } });
   });
   renderLeaderboard();
+  wireReliability(opts.preserve);
   renderActivity();
 }
 
@@ -1227,6 +1286,7 @@ function renderDetail(d, opts) {
     th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   renderSessions();
+  wireReliability(opts.preserve);
   renderActivity();
 }
 
@@ -1268,6 +1328,7 @@ function renderSession(d) {
       ${d.prompts.length ? d.prompts.map((p, i) => `<div class="prompt"><div class="when">#${i + 1} · ${fmtDateTime(p.ts)}</div><div class="text">${esc(p.text)}</div></div>`).join('') : '<div class="loading">No user prompts recorded.</div>'}
     </div>`;
   document.getElementById('sess-back').addEventListener('click', () => selectProject(d.projectId));
+  wireReliability(false);
 }
 
 // --- Init -------------------------------------------------------------------
