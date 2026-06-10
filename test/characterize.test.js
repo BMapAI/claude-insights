@@ -128,6 +128,9 @@ test('the fixture exercises the full aggregation surface', () => {
   assert.deepEqual(o.topAgentKinds.map((s) => s.name), ['main'], 'all fixture turns are main-thread (no subagents)');
   assert.deepEqual(o.topTiers.map((s) => s.name), ['standard'], 'tier defaults to standard when unset');
   assert.deepEqual(o.topVersions.map((s) => s.name), ['unknown'], 'version is unknown when the line carries none');
+  assert.ok(o.signals && Array.isArray(o.signals.stopReasons), 'per-turn signals block present');
+  assert.equal(o.signals.thinkingTurns, 0, 'fixture has no extended-thinking turns');
+  assert.equal(o.signals.compactions, 0, 'fixture has no compactions');
   assert.equal(o.reliability.totalErrors, 1, 'the failed Bash result is counted');
   assert.ok(o.reliability.wastedCost > 0, 'recovery spend after the error is priced');
   assert.deepEqual(o.output, { commits: 1, prs: 1, edits: 2, filesEdited: 2,

@@ -93,6 +93,14 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   **Claude Code version** (so a cost shift after an upgrade is visible). Each split is
   shown only when there's more than one key to compare — branch and version split into a
   top-8-plus-"other" bar; subagent and tier panels stay hidden until they actually occur.
+- **Turn signals** — lighter per-turn tallies that ride alongside the cost: how turns
+  ended (a stop-reason mini-bar, with `max_tokens` **truncations** and **refusals**
+  flagged as friction), context **compactions** (count, trigger, and how full the
+  context got first — a long-session-pressure signal), **extended-thinking usage** (the
+  share of turns that engaged thinking — a *frequency*, not a token cost, because the
+  thinking text isn't stored), **user-pasted images**, and **server-side web
+  search/fetch** requests (with an estimated per-request cost from `pricing.json`). Each
+  card appears only when it has something to show.
 - **Time & latency** — wall-clock time alongside dollar-cost, from Claude Code's
   `turn_duration` records: total active time, turn count, median and p90 turn duration
   (median, since the tail is long), spend per hour of active time, time per prompt, and

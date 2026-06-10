@@ -191,3 +191,58 @@ test('parseSession splits spend by branch / subagent / tier / version', () => {
   assert.equal(d.byVersion['2.1.170'].opus.input, 300, 'v2.1.170 = A+B');
   assert.equal(d.byVersion['2.2.0'].opus.input, 300, 'v2.2.0 = C');
 });
+
+// --- Batch 2: per-turn signals ----------------------------------------------
+test('parseSession tallies stop-reasons, thinking, compaction, images, web tools', () => {
+  const day = '2026-03-05';
+  const ts = (s) => `${day}T11:00:${s}.000Z`;
+  const objs = [
+    { type: 'user', cwd: '/home/demo/acme', gitBranch: 'main', timestamp: ts('01'),
+      message: { content: 'go' } },
+    // Truncated turn that used extended thinking and made 3 web searches.
+    { type: 'assistant', timestamp: ts('05'),
+      message: { model: 'claude-opus-4-8', stop_reason: 'max_tokens',
+        usage: { input_tokens: 100, output_tokens: 50, server_tool_use: { web_search_requests: 3, web_fetch_requests: 0 } },
+        content: [ { type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: 'partial' } ] } },
+    // A clean turn.
+    { type: 'assistant', timestamp: ts('08'),
+      message: { model: 'claude-opus-4-8', stop_reason: 'end_turn',
+        usage: { input_tokens: 50, output_tokens: 20 }, content: [ { type: 'text', text: 'done' } ] } },
+    // A context compaction.
+    { type: 'system', subtype: 'compact_boundary', timestamp: ts('10'),
+      compactMetadata: { trigger: 'auto', preTokens: 120000, durationMs: 5000 } },
+    // A user-pasted image (top-level image block) → counts.
+    { type: 'user', timestamp: ts('12'),
+      message: { content: [ { type: 'text', text: 'look at this' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'x' } } ] } },
+    // An image returned *inside* a tool_result → must NOT count as a pasted image.
+    { type: 'user', timestamp: ts('14'),
+      message: { content: [ { type: 'tool_result', tool_use_id: 'z', content: [ { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'y' } } ] } ] } },
+  ];
+  const f = path.join(dir, 'signals.jsonl');
+  fs.writeFileSync(f, objs.map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const parsedS = L.parseSession(f);
+  const d = parsedS.days[day];
+
+  assert.deepEqual(d.stopReasons, { max_tokens: 1, end_turn: 1 });
+  assert.equal(d.thinkingTurns, 1);
+  assert.equal(d.thinkingBlocks, 1);
+  assert.equal(d.compactions, 1);
+  assert.deepEqual(d.compactTrigger, { auto: 1 });
+  assert.equal(d.compactPreTokens, 120000);
+  assert.equal(d.compactMs, 5000);
+  assert.equal(d.imageTurns, 1, 'only the top-level image counts');
+  assert.equal(d.images, 1);
+  assert.equal(d.webSearch, 3);
+  assert.equal(d.webFetch, 0);
+
+  // turnSignals derives shares + a priced (estimated) web cost.
+  const agg = L.aggregateSession(parsedS, null, null);
+  const sig = L.turnSignals(agg, agg.assistantMessages);
+  assert.equal(sig.truncated, 1);
+  assert.equal(sig.truncationRate, 0.5, '1 of 2 turns truncated');
+  assert.equal(sig.thinkingShare, 0.5, '1 of 2 turns used thinking');
+  assert.equal(sig.compactAvgPreTokens, 120000);
+  assert.equal(sig.imageTurns, 1);
+  const P = L.getPricing();
+  assert.ok(Math.abs(sig.webCost - (3 / 1000) * P.webSearchPer1k) < 1e-9, 'web cost priced per request');
+});

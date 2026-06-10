@@ -34,6 +34,11 @@ const DEFAULT_PRICING = {
   cacheReadMultiplier: 0.1,
   cacheWrite5mMultiplier: 1.25,
   cacheWrite1hMultiplier: 2.0,
+  // Server-side tools, billed per request (not per token). Anthropic web search
+  // is ~$10 / 1,000 requests; web fetch carries no separate per-request fee by
+  // default (its tokens are already in usage). Override in pricing.json.
+  webSearchPer1k: 10,
+  webFetchPer1k: 0,
 };
 
 // Validate a parsed pricing.json. Every field is optional (partial overrides are
@@ -59,7 +64,7 @@ function validatePricing(raw) {
       if (raw[fam][k] != null) checkNum(raw[fam][k], `${fam}.${k}`);
     }
   }
-  for (const k of ['cacheReadMultiplier', 'cacheWrite5mMultiplier', 'cacheWrite1hMultiplier']) {
+  for (const k of ['cacheReadMultiplier', 'cacheWrite5mMultiplier', 'cacheWrite1hMultiplier', 'webSearchPer1k', 'webFetchPer1k']) {
     if (raw[k] != null) checkNum(raw[k], k);
   }
   return errors;
@@ -441,6 +446,44 @@ function timeStats(durations, userPrompts, cost) {
     perPromptMs: userPrompts > 0 ? totalMs / userPrompts : 0,
     costPerHour: hours > 0 ? cost / hours : 0,
     hist,
+  };
+}
+
+// --- Per-turn signals -------------------------------------------------------
+// Lighter-weight tallies that ride alongside the token bundles: how turns ended,
+// context compactions, extended-thinking usage, pasted images, and server-side
+// web tools. `s` holds the accumulated raw counts; assistantMessages is the
+// denominator for the thinking share. Honest framing matters here:
+//  - thinkingShare is the FRACTION OF TURNS that used extended thinking, not a
+//    token/cost share — the thinking text is stripped from transcripts, so its
+//    token cost can't be isolated (it's already inside output_tokens).
+//  - webCost is an ESTIMATE priced from pricing.json's per-request rates and is
+//    reported separately because server-tool requests aren't part of usage.
+function turnSignals(s, assistantMessages) {
+  const P = getPricing();
+  const stopReasons = Object.entries(s.stopReasons || {})
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count);
+  const totalStops = stopReasons.reduce((n, x) => n + x.count, 0);
+  const truncated = (s.stopReasons && s.stopReasons.max_tokens) || 0;
+  const refused = (s.stopReasons && s.stopReasons.refusal) || 0;
+  const compactions = s.compactions || 0;
+  const webSearch = s.webSearch || 0;
+  const webFetch = s.webFetch || 0;
+  const webCost = (webSearch / 1000) * (P.webSearchPer1k || 0) + (webFetch / 1000) * (P.webFetchPer1k || 0);
+  return {
+    stopReasons, totalStops, truncated, refused,
+    truncationRate: totalStops > 0 ? truncated / totalStops : 0,
+    compactions,
+    compactTrigger: s.compactTrigger || {},
+    compactAvgPreTokens: compactions > 0 ? Math.round((s.compactPreTokens || 0) / compactions) : 0,
+    compactMs: s.compactMs || 0,
+    thinkingTurns: s.thinkingTurns || 0,
+    thinkingBlocks: s.thinkingBlocks || 0,
+    thinkingShare: assistantMessages > 0 ? (s.thinkingTurns || 0) / assistantMessages : 0,
+    imageTurns: s.imageTurns || 0,
+    images: s.images || 0,
+    webSearch, webFetch, webCost,
   };
 }
 
@@ -827,6 +870,17 @@ function parseSession(filePath) {
         byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, byEntry: {}, hours: {},
         byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
         toolErrors: {}, errorFollowup: {},
+        // Per-turn signals — counts, not token bundles. stopReasons: { reason ->
+        //   count } (how assistant turns ended; max_tokens = truncated, refusal).
+        // compactions / compactTrigger / compactPreTokens / compactMs: context
+        //   auto-compaction events (compact_boundary) and their metadata.
+        // thinkingTurns / thinkingBlocks: extended-thinking usage (the thinking
+        //   TEXT is stripped from transcripts, so this is frequency, not tokens).
+        // imageTurns / images: user-pasted image blocks (tool-result images excluded).
+        // webSearch / webFetch: server-side tool requests (billed per request).
+        stopReasons: {}, compactions: 0, compactTrigger: {}, compactPreTokens: 0, compactMs: 0,
+        thinkingTurns: 0, thinkingBlocks: 0, imageTurns: 0, images: 0,
+        webSearch: 0, webFetch: 0,
         turnMs: 0, turns: 0, durations: [],
         // Output metrics (the "R" in ROI): git commits, PRs opened, and files
         // touched by Edit/Write. editsByFile keys give the distinct-file count
@@ -876,20 +930,46 @@ function parseSession(filePath) {
       day.durations.push(o.durationMs);
     }
 
+    // Context compaction: Claude Code emits one compact_boundary when the running
+    // context is summarized. compactMetadata carries the trigger (manual vs auto)
+    // and preTokens (how full the context got before it was compacted).
+    if (o.type === 'system' && o.subtype === 'compact_boundary') {
+      const day = getDay(o.timestamp);
+      day.compactions += 1;
+      const cm = o.compactMetadata || {};
+      const trig = cm.trigger || 'unknown';
+      day.compactTrigger[trig] = (day.compactTrigger[trig] || 0) + 1;
+      if (typeof cm.preTokens === 'number' && cm.preTokens > 0) day.compactPreTokens += cm.preTokens;
+      if (typeof cm.durationMs === 'number' && cm.durationMs > 0) day.compactMs += cm.durationMs;
+    }
+
     if (o.type === 'user') {
       const content = o.message && o.message.content;
       if (typeof content === 'string' && content.trim()) {
         if (!data.firstPrompt) data.firstPrompt = content;
         getDay(o.timestamp).userPrompts += 1;
       } else if (Array.isArray(content)) {
-        // Tool results ride back as array-content user messages; tally failures.
+        // Array-content user messages carry tool results AND user-pasted images.
+        // Tally failed results (recovery spend) and top-level image blocks — the
+        // latter is a multimodal-input signal. Images returned *inside* a
+        // tool_result (screenshots, image file reads) are nested one level deeper
+        // and deliberately not counted as "you working with an image".
+        let imgs = 0;
         for (const b of content) {
-          if (b && b.type === 'tool_result' && b.is_error) {
+          if (!b) continue;
+          if (b.type === 'tool_result' && b.is_error) {
             pendingError = true;
             const name = toolNames[b.tool_use_id] || 'unknown';
             const day = getDay(o.timestamp);
             day.toolErrors[name] = (day.toolErrors[name] || 0) + 1;
+          } else if (b.type === 'image') {
+            imgs += 1;
           }
+        }
+        if (imgs > 0) {
+          const day = getDay(o.timestamp);
+          day.imageTurns += 1;
+          day.images += imgs;
         }
       }
     }
@@ -902,7 +982,12 @@ function parseSession(filePath) {
       day.assistantMessages += 1;
       hour.messages += 1;
 
+      // How the turn ended: end_turn / tool_use are normal; max_tokens means the
+      // answer was truncated and refusal means it was declined — both friction.
+      if (msg.stop_reason) day.stopReasons[msg.stop_reason] = (day.stopReasons[msg.stop_reason] || 0) + 1;
+
       if (Array.isArray(msg.content)) {
+        let thinkBlocks = 0;
         for (const b of msg.content) {
           if (b && b.type === 'tool_use') {
             day.toolUses += 1;
@@ -910,13 +995,23 @@ function parseSession(filePath) {
             day.tools[name] = (day.tools[name] || 0) + 1;
             if (b.id) toolNames[b.id] = name; // for later tool_result matching
             recordOutput(day, name, b.input); // commits / PRs / files touched
+          } else if (b && b.type === 'thinking') {
+            thinkBlocks += 1; // extended-thinking usage (text itself is stripped)
           }
         }
+        if (thinkBlocks > 0) { day.thinkingTurns += 1; day.thinkingBlocks += thinkBlocks; }
       }
 
       const u = msg.usage;
       if (u) {
         const bundle = usageToBundle(u);
+        // Server-side tools (web search / fetch) are billed per request, separate
+        // from token usage, so count them rather than folding into the bundle.
+        const st = u.server_tool_use;
+        if (st) {
+          day.webSearch += st.web_search_requests || 0;
+          day.webFetch += st.web_fetch_requests || 0;
+        }
         addBundle(getFam(day, family), bundle);
         addBundle(famBundleIn(hour.byFamily, family), bundle);
         // Track the exact model id (opus-4-8 vs opus-4-7, etc.); skip synthetic
@@ -1091,12 +1186,17 @@ function aggregateSession(s, from, to) {
   const toolErrors = {};
   const errorFollowup = {};
   const editsByFile = {};
+  const stopReasons = {};
+  const compactTrigger = {};
   let userPrompts = 0;
   let assistantMessages = 0;
   let toolUses = 0;
   let commits = 0;
   let prs = 0;
   let edits = 0;
+  let compactions = 0, compactPreTokens = 0, compactMs = 0;
+  let thinkingTurns = 0, thinkingBlocks = 0, imageTurns = 0, images = 0;
+  let webSearch = 0, webFetch = 0;
   let has = false;
   for (const [day, d] of Object.entries(s.days)) {
     if (!inRange(day, from, to)) continue;
@@ -1107,6 +1207,17 @@ function aggregateSession(s, from, to) {
     commits += d.commits || 0;
     prs += d.prs || 0;
     edits += d.edits || 0;
+    compactions += d.compactions || 0;
+    compactPreTokens += d.compactPreTokens || 0;
+    compactMs += d.compactMs || 0;
+    thinkingTurns += d.thinkingTurns || 0;
+    thinkingBlocks += d.thinkingBlocks || 0;
+    imageTurns += d.imageTurns || 0;
+    images += d.images || 0;
+    webSearch += d.webSearch || 0;
+    webFetch += d.webFetch || 0;
+    for (const [r, c] of Object.entries(d.stopReasons || {})) stopReasons[r] = (stopReasons[r] || 0) + c;
+    for (const [t, c] of Object.entries(d.compactTrigger || {})) compactTrigger[t] = (compactTrigger[t] || 0) + c;
     for (const [n, c] of Object.entries(d.tools)) tools[n] = (tools[n] || 0) + c;
     for (const [n, c] of Object.entries(d.editsByFile || {})) editsByFile[n] = (editsByFile[n] || 0) + c;
     for (const [n, c] of Object.entries(d.toolErrors || {})) toolErrors[n] = (toolErrors[n] || 0) + c;
@@ -1121,7 +1232,7 @@ function aggregateSession(s, from, to) {
     mergeByName(byTier, d.byTier || {});
     mergeByName(byVersion, d.byVersion || {});
   }
-  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, byVersion, tools, toolErrors, errorFollowup, editsByFile, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
+  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, byVersion, tools, toolErrors, errorFollowup, editsByFile, stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
 }
 
 // --- Shared aggregation -----------------------------------------------------
@@ -1137,10 +1248,14 @@ function newAccumulator() {
     bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
     byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
     tools: {}, toolErrors: {}, errorFollowup: {},
+    stopReasons: {}, compactTrigger: {},
     dayMap: {}, dayHours: {}, durations: [],
     editsByFile: {},
     userPrompts: 0, assistantMessages: 0, toolUses: 0,
     commits: 0, prs: 0, edits: 0,
+    compactions: 0, compactPreTokens: 0, compactMs: 0,
+    thinkingTurns: 0, thinkingBlocks: 0, imageTurns: 0, images: 0,
+    webSearch: 0, webFetch: 0,
     prevPrompts: 0, turnMs: 0, sessionCount: 0,
     dataStart: null, dataEnd: null,
   };
@@ -1180,6 +1295,18 @@ function foldSession(acc, s, agg, from, to) {
   mergeByName(acc.byAgentKind, agg.byAgentKind);
   mergeByName(acc.byTier, agg.byTier);
   mergeByName(acc.byVersion, agg.byVersion);
+  // Per-turn signal counters (scalars + two count maps).
+  acc.compactions += agg.compactions;
+  acc.compactPreTokens += agg.compactPreTokens;
+  acc.compactMs += agg.compactMs;
+  acc.thinkingTurns += agg.thinkingTurns;
+  acc.thinkingBlocks += agg.thinkingBlocks;
+  acc.imageTurns += agg.imageTurns;
+  acc.images += agg.images;
+  acc.webSearch += agg.webSearch;
+  acc.webFetch += agg.webFetch;
+  for (const [r, c] of Object.entries(agg.stopReasons)) acc.stopReasons[r] = (acc.stopReasons[r] || 0) + c;
+  for (const [t, c] of Object.entries(agg.compactTrigger)) acc.compactTrigger[t] = (acc.compactTrigger[t] || 0) + c;
 
   // Per-day rollup: the daily chart, the day×hour activity grid, latency samples, and the
   // span of days that actually carried activity.
@@ -1236,6 +1363,7 @@ function finalizeCommon(acc, prev) {
     topMcp: priceByName(acc.byMcp),
     reliability,
     time,
+    signals: turnSignals(acc, acc.assistantMessages),
     efficiency: efficiencyStats(acc.grand, acc.userPrompts, acc.toolUses),
     output,
     delta,
@@ -1330,6 +1458,7 @@ function projectDetail(folder, from, to) {
     topMcp: c.topMcp,
     reliability: c.reliability,
     time: c.time,
+    signals: c.signals,
     sessions,
     delta: c.delta,
     efficiency: c.efficiency,
@@ -1525,6 +1654,7 @@ function overview(from, to) {
     topMcp: c.topMcp,
     reliability: c.reliability,
     time: c.time,
+    signals: c.signals,
     projects,
     budget,
     plan,
@@ -1654,6 +1784,12 @@ function sessionDetail(folder, sessionId) {
   const toolNames = {};
   const durations = [];
   const output = { commits: 0, prs: 0, edits: 0, editsByFile: {} };
+  const stopReasons = {};
+  const compactTrigger = {};
+  let assistantMessages = 0;
+  let compactions = 0, compactPreTokens = 0, compactMs = 0;
+  let thinkingTurns = 0, thinkingBlocks = 0, imageTurns = 0, images = 0;
+  let webSearch = 0, webFetch = 0;
   let pendingError = false;
   let cumCost = 0;
 
@@ -1677,6 +1813,14 @@ function sessionDetail(folder, sessionId) {
     if (o.type === 'system' && o.subtype === 'turn_duration' && typeof o.durationMs === 'number' && o.durationMs >= 0) {
       durations.push(o.durationMs);
     }
+    if (o.type === 'system' && o.subtype === 'compact_boundary') {
+      compactions += 1;
+      const cm = o.compactMetadata || {};
+      const trig = cm.trigger || 'unknown';
+      compactTrigger[trig] = (compactTrigger[trig] || 0) + 1;
+      if (typeof cm.preTokens === 'number' && cm.preTokens > 0) compactPreTokens += cm.preTokens;
+      if (typeof cm.durationMs === 'number' && cm.durationMs > 0) compactMs += cm.durationMs;
+    }
 
     if (o.type === 'user') {
       const content = o.message && o.message.content;
@@ -1684,32 +1828,45 @@ function sessionDetail(folder, sessionId) {
         if (!out.firstPrompt) out.firstPrompt = content;
         out.prompts.push({ ts: o.timestamp || null, text: content.slice(0, 4000) });
       } else if (Array.isArray(content)) {
+        let imgs = 0;
         for (const b of content) {
-          if (b && b.type === 'tool_result' && b.is_error) {
+          if (!b) continue;
+          if (b.type === 'tool_result' && b.is_error) {
             pendingError = true;
             const name = toolNames[b.tool_use_id] || 'unknown';
             toolErrors[name] = (toolErrors[name] || 0) + 1;
+          } else if (b.type === 'image') {
+            imgs += 1;
           }
         }
+        if (imgs > 0) { imageTurns += 1; images += imgs; }
       }
     }
 
     if (o.type === 'assistant' && o.message) {
       const msg = o.message;
       const family = modelFamily(msg.model);
+      assistantMessages += 1;
+      if (msg.stop_reason) stopReasons[msg.stop_reason] = (stopReasons[msg.stop_reason] || 0) + 1;
       if (Array.isArray(msg.content)) {
+        let thinkBlocks = 0;
         for (const b of msg.content) {
           if (b && b.type === 'tool_use') {
             const name = b.name || 'unknown';
             out.tools[name] = (out.tools[name] || 0) + 1;
             if (b.id) toolNames[b.id] = name;
             recordOutput(output, name, b.input);
+          } else if (b && b.type === 'thinking') {
+            thinkBlocks += 1;
           }
         }
+        if (thinkBlocks > 0) { thinkingTurns += 1; thinkingBlocks += thinkBlocks; }
       }
       const u = msg.usage;
       if (u) {
         const fb = usageToBundle(u);
+        const st = u.server_tool_use;
+        if (st) { webSearch += st.web_search_requests || 0; webFetch += st.web_fetch_requests || 0; }
         const msgCost = priceBundles({ [family]: fb }).cost;
         cumCost += msgCost;
         out.timeline.push({ ts: o.timestamp || null, cost: msgCost, cumCost });
@@ -1761,6 +1918,7 @@ function sessionDetail(folder, sessionId) {
     topVersions: priceByName(byVersion),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     time: timeStats(durations, out.prompts.length, priced.cost),
+    signals: turnSignals({ stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch }, assistantMessages),
     output: outputStats(output, priced.cost),
     timeline: out.timeline,
   };
@@ -1973,6 +2131,7 @@ module.exports = {
   efficiencyStats,
   reliabilityStats,
   timeStats,
+  turnSignals,
   recordOutput,
   outputStats,
   computeVerdict,

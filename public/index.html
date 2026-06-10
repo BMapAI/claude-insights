@@ -841,6 +841,48 @@ function attributionSplits(d) {
     + splitSection('Service tier', d.topTiers, 'Spend by API service tier — <code>standard</code> vs <code>priority</code>/<code>batch</code>, which bill at different rates.')
     + splitSection('Claude Code version', d.topVersions, 'Spend by Claude Code CLI version — a cost shift after an upgrade shows up here.');
 }
+// Per-turn signals: extended-thinking usage, context compactions, truncated /
+// refused turns, pasted images, estimated web-tool spend, and how turns ended.
+// Shown only when at least one signal is non-trivial (else it's a row of zeros).
+const STOP_META = {
+  end_turn:   { label: 'Completed', color: '#5dd6a0' },
+  tool_use:   { label: 'Tool call', color: '#6ea8fe' },
+  max_tokens: { label: 'Truncated', color: '#d9575f' },
+  refusal:    { label: 'Refused', color: '#d97757' },
+  pause_turn: { label: 'Paused', color: '#c6a15b' },
+};
+function signalsSection(s) {
+  if (!s) return '';
+  const stops = s.stopReasons || [];
+  const hasStops = stops.length >= 2 || s.truncated > 0 || s.refused > 0;
+  if (!(s.thinkingTurns > 0 || s.compactions > 0 || s.imageTurns > 0 || (s.webSearch + s.webFetch) > 0 || hasStops)) return '';
+  const card = (label, value, sub, color) =>
+    `<div class="eff"><div class="label">${esc(label)}</div><div class="value"${color ? ` style="color:${color}"` : ''}>${value}${sub ? `<span class="u">${esc(sub)}</span>` : ''}</div></div>`;
+  const cards = [];
+  if (s.thinkingTurns > 0) cards.push(card('Extended thinking', `${(s.thinkingShare * 100).toFixed(0)}%`, `${fmtNum(s.thinkingTurns)} turns`));
+  if (s.compactions > 0) cards.push(card('Compactions', fmtNum(s.compactions), s.compactAvgPreTokens > 0 ? `~${fmtTokens(s.compactAvgPreTokens)} ctx` : ''));
+  if (s.truncated > 0) cards.push(card('Truncated', fmtNum(s.truncated), `${(s.truncationRate * 100).toFixed(1)}% of turns`, 'var(--warn)'));
+  if (s.refused > 0) cards.push(card('Refused', fmtNum(s.refused), 'declined turns', 'var(--warn)'));
+  if (s.imageTurns > 0) cards.push(card('Image prompts', fmtNum(s.imageTurns), `${fmtNum(s.images)} image${s.images === 1 ? '' : 's'}`));
+  if ((s.webSearch + s.webFetch) > 0) cards.push(card('Web requests', fmtNum(s.webSearch + s.webFetch), s.webCost > 0 ? `~${fmtUSD(s.webCost)} est.` : 'billed separately'));
+  // "How turns ended" mini-bar (tool_use dominates; truncation/refusal stand out).
+  let stopBlock = '';
+  if (stops.length) {
+    const total = stops.reduce((n, x) => n + x.count, 0) || 1;
+    const meta = (r) => STOP_META[r] || { label: r, color: '#8b93a7' };
+    const bar = stops.map((x) => `<div style="width:${(x.count / total * 100).toFixed(2)}%;background:${meta(x.reason).color}"></div>`).join('');
+    const legend = stops.map((x) => `<span class="item"><span class="dot" style="background:${meta(x.reason).color}"></span>${esc(meta(x.reason).label)} — ${fmtNum(x.count)} (${(x.count / total * 100).toFixed(0)}%)</span>`).join('');
+    stopBlock = `<div style="margin-top:18px">
+      <div class="label" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px">How turns ended</div>
+      <div class="split">${bar}</div><div class="legend">${legend}</div></div>`;
+  }
+  return `<div class="section">
+    <h3>Turn signals</h3>
+    ${cards.length ? `<div class="effgrid">${cards.join('')}</div>` : ''}
+    ${stopBlock}
+    <div class="hint" style="margin-top:14px"><strong>Extended thinking</strong> is the share of assistant turns that used thinking (a frequency — the thinking text isn't stored, so its token cost can't be split out). <strong>Compactions</strong> are context summarizations (long-session pressure). <strong>Truncated</strong> = turns cut off at the token limit. <strong>Web requests</strong> bill per request; the dollar figure is an estimate from <code>pricing.json</code>.</div>
+  </div>`;
+}
 // Turn latency / time-cost: how much wall-clock time the work took, where it
 // went (duration histogram), and spend per hour of active time.
 function timeSection(t) {
@@ -1246,6 +1288,7 @@ function renderOverview(d, opts) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
+    ${signalsSection(d.signals)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1306,6 +1349,7 @@ function renderDetail(d, opts) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
+    ${signalsSection(d.signals)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1362,6 +1406,7 @@ function renderSession(d) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
+    ${signalsSection(d.signals)}
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}

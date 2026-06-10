@@ -1,9 +1,11 @@
 {
-  "_comment": "USD per 1M tokens. Edit to match your actual rates; changes are picked up automatically (no restart). Delete this file to use built-in defaults.",
+  "_comment": "USD per 1M tokens (model rates). Cache multipliers scale the input rate. webSearchPer1k/webFetchPer1k are USD per 1,000 server-side tool requests (billed per request, not per token). Edit to match your actual rates; changes are picked up automatically (no restart). Delete this file to use built-in defaults.",
   "opus": { "input": 5, "output": 25 },
   "sonnet": { "input": 3, "output": 15 },
   "haiku": { "input": 1, "output": 5 },
   "cacheReadMultiplier": 0.1,
   "cacheWrite5mMultiplier": 1.25,
-  "cacheWrite1hMultiplier": 2.0
+  "cacheWrite1hMultiplier": 2.0,
+  "webSearchPer1k": 10,
+  "webFetchPer1k": 0
 }

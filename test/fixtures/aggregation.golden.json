@@ -328,6 +328,25 @@
         }
       ]
     },
+    "signals": {
+      "stopReasons": [],
+      "totalStops": 0,
+      "truncated": 0,
+      "refused": 0,
+      "truncationRate": 0,
+      "compactions": 0,
+      "compactTrigger": {},
+      "compactAvgPreTokens": 0,
+      "compactMs": 0,
+      "thinkingTurns": 0,
+      "thinkingBlocks": 0,
+      "thinkingShare": 0,
+      "imageTurns": 0,
+      "images": 0,
+      "webSearch": 0,
+      "webFetch": 0,
+      "webCost": 0
+    },
     "projects": [
       {
         "id": "-home-demo-alpha",
@@ -770,6 +789,25 @@
           "count": 0
         }
       ]
+    },
+    "signals": {
+      "stopReasons": [],
+      "totalStops": 0,
+      "truncated": 0,
+      "refused": 0,
+      "truncationRate": 0,
+      "compactions": 0,
+      "compactTrigger": {},
+      "compactAvgPreTokens": 0,
+      "compactMs": 0,
+      "thinkingTurns": 0,
+      "thinkingBlocks": 0,
+      "thinkingShare": 0,
+      "imageTurns": 0,
+      "images": 0,
+      "webSearch": 0,
+      "webFetch": 0,
+      "webCost": 0
     },
     "sessions": [
       {
