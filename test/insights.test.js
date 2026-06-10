@@ -66,3 +66,40 @@ test('empty / unusual-free input yields no signals', () => {
   assert.deepEqual(L.computeInsights({ totals: { cost: 0 } }), []);
   assert.deepEqual(L.computeInsights({}), []);
 });
+
+// --- Batch 1–4 signals wired into the insight engine ------------------------
+test('flags subagent-heavy spend past 45% of cost (dollar-valued)', () => {
+  const ins = L.computeInsights({ totals: { cost: 100 }, topAgentKinds: [{ name: 'main', cost: 40 }, { name: 'subagent', cost: 60 }] });
+  const sub = ins.find((s) => s.kind === 'subagent');
+  assert.ok(sub && sub.sev === 60, 'severity is the subagent dollar cost');
+  assert.ok(!kinds({ totals: { cost: 100 }, topAgentKinds: [{ name: 'main', cost: 70 }, { name: 'subagent', cost: 30 }] }).includes('subagent'));
+});
+
+test('flags web-tool spend above the floor, ignores trivial usage', () => {
+  const web = L.computeInsights({ totals: { cost: 100 }, signals: { webSearch: 50, webFetch: 0, webCost: 5, truncated: 0, truncationRate: 0, compactions: 0 } }).find((s) => s.kind === 'web');
+  assert.ok(web && web.sev === 5);
+  assert.ok(!kinds({ totals: { cost: 100 }, signals: { webSearch: 1, webFetch: 0, webCost: 0.1, truncated: 0, truncationRate: 0, compactions: 0 } }).includes('web'));
+});
+
+test('flags truncated turns (>=3 and >=2%) and frequent compaction (>=3)', () => {
+  assert.ok(kinds({ totals: { cost: 100 }, signals: { truncated: 5, truncationRate: 0.1, compactions: 0, webSearch: 0, webFetch: 0, webCost: 0 } }).includes('truncation'));
+  assert.ok(!kinds({ totals: { cost: 100 }, signals: { truncated: 2, truncationRate: 0.5, compactions: 0, webSearch: 0, webFetch: 0, webCost: 0 } }).includes('truncation'));
+  assert.ok(kinds({ totals: { cost: 100 }, signals: { compactions: 4, compactAvgPreTokens: 500000, truncated: 0, truncationRate: 0, webSearch: 0, webFetch: 0, webCost: 0 } }).includes('compaction'));
+  assert.ok(!kinds({ totals: { cost: 100 }, signals: { compactions: 2, truncated: 0, truncationRate: 0, webSearch: 0, webFetch: 0, webCost: 0 } }).includes('compaction'));
+});
+
+test('flags high session concurrency at >=4 max concurrent', () => {
+  assert.ok(kinds({ totals: { cost: 100 }, concurrency: { maxConcurrent: 6, parallelSessions: 10, totalSessions: 12 } }).includes('concurrency'));
+  assert.ok(!kinds({ totals: { cost: 100 }, concurrency: { maxConcurrent: 2, parallelSessions: 1, totalSessions: 5 } }).includes('concurrency'));
+});
+
+test('dollar insights still outrank the sev-0 signal notes', () => {
+  // A subagent ($) and a truncation note (sev 0) together: subagent ranks first.
+  const ins = L.computeInsights({
+    totals: { cost: 100 },
+    topAgentKinds: [{ name: 'main', cost: 30 }, { name: 'subagent', cost: 70 }],
+    signals: { truncated: 9, truncationRate: 0.3, compactions: 5, webSearch: 0, webFetch: 0, webCost: 0 },
+  });
+  assert.equal(ins[0].kind, 'subagent', 'the dollar insight sorts above sev-0 notes');
+  assert.ok(ins.some((s) => s.kind === 'truncation') && ins.some((s) => s.kind === 'compaction'));
+});

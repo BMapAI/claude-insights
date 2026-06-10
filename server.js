@@ -698,6 +698,39 @@ function computeInsights(v) {
     out.push({ kind: 'latency', sev: 0, tone: 'info', title: 'Slow-turn tail',
       detail: `p90 turn is ${fmtMsShort(v.time.p90Ms)} vs a ${fmtMsShort(v.time.medianMs)} median — a few long turns dominate the wait.` });
   }
+  // Subagent-heavy spend (the Task-agent analogue of the automation insight).
+  // Dollar-valued, so it ranks among the cost insights.
+  if (Array.isArray(v.topAgentKinds) && cost > 0) {
+    const sub = v.topAgentKinds.find((a) => a.name === 'subagent');
+    if (sub && sub.cost / cost >= 0.45) {
+      out.push({ kind: 'subagent', sev: sub.cost, tone: 'info', title: 'Subagent-heavy',
+        detail: `Task subagents drove ${pct(sub.cost / cost)} of spend (${usd(sub.cost)}).` });
+    }
+  }
+  // Server-side web tools — billed per request, separate from token cost. The
+  // estimated dollar figure is its severity.
+  if (v.signals && (v.signals.webSearch + v.signals.webFetch) > 0 && v.signals.webCost >= Math.max(0.5, 0.02 * cost)) {
+    const reqs = v.signals.webSearch + v.signals.webFetch;
+    out.push({ kind: 'web', sev: v.signals.webCost, tone: 'info', title: 'Web-tool spend',
+      detail: `${reqs} web search/fetch request${reqs === 1 ? '' : 's'} (~${usd(v.signals.webCost)}, estimated, billed separately from tokens).` });
+  }
+  // Truncated turns: answers cut off at the token limit — work may be incomplete.
+  // No clean dollar value, so it ranks below the cost insights (sev 0), like latency.
+  if (v.signals && v.signals.truncated >= 3 && v.signals.truncationRate >= 0.02) {
+    out.push({ kind: 'truncation', sev: 0, tone: 'warn', title: 'Truncated turns',
+      detail: `${v.signals.truncated} turn${v.signals.truncated === 1 ? '' : 's'} (${pct(v.signals.truncationRate)}) hit the token limit and were cut off — those answers may be incomplete.` });
+  }
+  // Frequent context compaction: long sessions repeatedly summarizing context.
+  if (v.signals && v.signals.compactions >= 3) {
+    const ctx = v.signals.compactAvgPreTokens > 0 ? ` (avg ~${Math.round(v.signals.compactAvgPreTokens / 1000)}K tokens before each)` : '';
+    out.push({ kind: 'compaction', sev: 0, tone: 'info', title: 'Frequent compaction',
+      detail: `${v.signals.compactions} context compactions${ctx} — long sessions are repeatedly hitting the context limit.` });
+  }
+  // High session concurrency: parallel work burns spend faster (all-projects view).
+  if (v.concurrency && v.concurrency.maxConcurrent >= 4) {
+    out.push({ kind: 'concurrency', sev: 0, tone: 'info', title: 'Parallel sessions',
+      detail: `Up to ${v.concurrency.maxConcurrent} sessions ran at once (${v.concurrency.parallelSessions} of ${v.concurrency.totalSessions} overlapped another).` });
+  }
 
   return out.sort((a, b) => b.sev - a.sev).slice(0, 5);
 }
@@ -1738,7 +1771,7 @@ function projectDetail(folder, from, to) {
     delta: c.delta,
     efficiency: c.efficiency,
     output: c.output,
-    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds }),
     history: analyzeHistory(from, to, cwd || ''),
     churn: analyzeChurn(from, to, new Set(items.map((x) => x.s.id))),
   };
@@ -1837,6 +1870,7 @@ function overview(from, to) {
   persistRollups(scanned);
 
   const c = finalizeCommon(gacc, prev);
+  const concurrency = sessionConcurrency(intervals); // also feeds the insights engine
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
 
   const monthPriced = priceBundles(monthGrand);
@@ -1940,11 +1974,11 @@ function overview(from, to) {
     delta: c.delta,
     efficiency: c.efficiency,
     output: c.output,
-    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, concurrency }),
     history: analyzeHistory(from, to),
     plans: analyzePlans(from, to),
     churn: analyzeChurn(from, to),
-    concurrency: sessionConcurrency(intervals),
+    concurrency,
     liveSessions: loadLiveSessions(),
     tasks: analyzeTasks(from, to),
     worklog: buildWorkLog({ from, to, cost: c.totals.cost, sessions: gacc.sessionCount, output: c.output, time: c.time, projects, themes: topThemes(themeWords, 6) }),

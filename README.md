@@ -29,9 +29,11 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 - **"Worth a look" signals** — a ranked panel at the top of each view that surfaces
   what actually stands out in the selected range: a spend spike, a pricey session,
   concentrated spend, recovery/friction cost, a big trend vs the prior period, heavy
-  automation, an unrecognized model, or a slow-turn latency tail. Purely descriptive
-  (it points; it doesn't prescribe), ranked by dollar impact, and shown only when
-  something genuinely stands out — so the dashboard leads with signal instead of
+  automation, subagent-heavy spend, web-tool spend, an unrecognized model, truncated
+  turns, frequent context compaction, heavy session concurrency, or a slow-turn latency
+  tail. Purely descriptive (it points; it doesn't prescribe), ranked by dollar impact
+  (the cost signals lead; the descriptive notes fill any remaining slots), and shown only
+  when something genuinely stands out — so the dashboard leads with signal instead of
   fifteen equally-weighted panels.
 - **"What you built" work log** — the accomplishment side of ROI: a per-range
   summary of commits, PRs, files, the sessions worked on, and recurring title
