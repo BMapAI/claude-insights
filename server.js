@@ -2477,6 +2477,7 @@ module.exports = {
   projectDetail,
   overview,
   listProjects,
+  sessionDetail,
   loadHistoryEntries,
   analyzeHistory,
   loadPlans,

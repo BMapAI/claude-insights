@@ -1515,6 +1515,89 @@ function renderSession(d) {
   wireReliability(false);
 }
 
+// --- Demo mode (static GitHub Pages build) ----------------------------------
+// On a static host there's no server, so a build step (tools/build-demo-site.js)
+// bakes the synthetic demo into demo/*.json and the page fetches those instead
+// of /api/*. Detected by host (github.io) or a ?demo flag; dormant otherwise.
+// "Now" is frozen to the build date so the relative presets resolve to baked
+// ranges, and server-only features (custom range, Live, exports) are hidden.
+const DEMO = location.hostname.endsWith('github.io') || /(?:^|[?&])demo(?:=|&|$)/.test(location.search);
+let DEMO_NOW = null; // 'YYYY-MM-DD' build date from demo/manifest.json
+
+// UTC-stable preset → {from,to}, identical here and in the bake script, so a
+// baked filename always matches what the page requests (no timezone drift).
+function presetRangeUTC(name, nowYMD) {
+  const shift = (ymd, days) => new Date(Date.parse(ymd + 'T00:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+  const [Y, M] = nowYMD.split('-').map(Number);
+  const p2 = (n) => String(n).padStart(2, '0');
+  if (name === 'all') return { from: null, to: null };
+  if (name === 'today') return { from: nowYMD, to: nowYMD };
+  if (name === 'yesterday') { const y = shift(nowYMD, -1); return { from: y, to: y }; }
+  if (name === 'week' || name === 'lastweek') {
+    const dow = (new Date(nowYMD + 'T00:00:00Z').getUTCDay() + 6) % 7; // Mon=0
+    const monday = shift(nowYMD, -dow);
+    if (name === 'week') return { from: monday, to: nowYMD };
+    return { from: shift(monday, -7), to: shift(monday, -1) };
+  }
+  if (name === 'month') return { from: `${Y}-${p2(M)}-01`, to: nowYMD };
+  if (name === 'lastmonth') {
+    const ly = M === 1 ? Y - 1 : Y, lm = M === 1 ? 12 : M - 1;
+    const last = new Date(Date.UTC(ly, lm, 0)).getUTCDate();
+    return { from: `${ly}-${p2(lm)}-01`, to: `${ly}-${p2(lm)}-${p2(last)}` };
+  }
+  const days = { '7': 6, '30': 29, '90': 89 }[name] || 0;
+  return { from: shift(nowYMD, -days), to: nowYMD };
+}
+const demoSlug = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, '_');
+// Map an /api/* request URL to its baked filename (or null for unbaked endpoints).
+function demoFileFor(url) {
+  const u = new URL(url, location.href);
+  const p = u.pathname.replace(/^.*\/api\//, '/api/'); // tolerate a Pages subpath
+  const F = u.searchParams.get('from') || 'all', T = u.searchParams.get('to') || 'all';
+  if (p === '/api/projects') return `projects__${F}__${T}.json`;
+  if (p === '/api/overview') return `overview__${F}__${T}.json`;
+  if (p.startsWith('/api/session/')) {
+    const rest = p.slice('/api/session/'.length), i = rest.indexOf('/');
+    if (i < 0) return null;
+    return `session__${demoSlug(rest.slice(0, i))}__${demoSlug(rest.slice(i + 1))}.json`;
+  }
+  if (p.startsWith('/api/project/') && !p.endsWith('.csv')) {
+    return `project__${demoSlug(p.slice('/api/project/'.length))}__${F}__${T}.json`;
+  }
+  return null; // *.csv / worklog.md / metrics aren't baked
+}
+async function initDemo() {
+  document.body.classList.add('demo');
+  const orig = window.fetch.bind(window);
+  try { DEMO_NOW = (await orig('demo/manifest.json').then((r) => r.json())).now; } catch (e) { DEMO_NOW = null; }
+  if (DEMO_NOW) presetRange = (name) => presetRangeUTC(name, DEMO_NOW);
+  // Route /api/* to baked snapshots; pass everything else through.
+  window.fetch = (url, opts) => {
+    if (typeof url === 'string' && url.includes('/api/')) {
+      const f = demoFileFor(url);
+      if (f) return orig('demo/' + f, opts);
+      return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return orig(url, opts);
+  };
+  // Hide server-only controls and add a banner.
+  const style = document.createElement('style');
+  style.textContent = '.csvlink{display:none!important}'
+    + '#demo-banner{background:var(--accent);color:#1a1109;padding:9px 16px;font-size:13px;font-weight:500;text-align:center}'
+    + '#demo-banner a{color:#1a1109;text-decoration:underline}';
+  document.head.appendChild(style);
+  const hide = (el) => { if (el) el.style.display = 'none'; };
+  const fromEl = document.getElementById('from');
+  hide(fromEl && fromEl.previousElementSibling); // the "Custom" label
+  hide(fromEl); hide(document.querySelector('.fb-dash')); hide(document.getElementById('to'));
+  hide(document.getElementById('live-toggle')); hide(document.getElementById('live-status'));
+  const main = document.getElementById('main');
+  const banner = document.createElement('div');
+  banner.id = 'demo-banner';
+  banner.innerHTML = 'Demo — synthetic data, a baked static snapshot. Date presets, drilldowns, and column sorting work; custom ranges, live refresh, and exports are off. <a href="https://github.com/BMapAI/claude-ledger" target="_blank" rel="noopener">Source ↗</a>';
+  main.insertBefore(banner, main.firstChild);
+}
+
 // --- Init -------------------------------------------------------------------
 async function init() {
   document.querySelectorAll('#presets button').forEach((b) =>
@@ -1557,7 +1640,7 @@ async function init() {
   if (wantLive && PROJECTS.length) setLive(true);
 }
 
-init().catch((e) => {
+(async () => { if (DEMO) await initDemo(); })().then(init).catch((e) => {
   document.getElementById('proj-list').innerHTML = '<div class="loading" style="padding:12px">Error: ' + esc(e.message) + '</div>';
 });
 </script>

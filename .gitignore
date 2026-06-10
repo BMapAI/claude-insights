@@ -2,3 +2,6 @@ node_modules/
 *.log
 .DS_Store
 .env
+
+# Built GitHub Pages demo (regenerate with tools/build-demo-site.js)
+site/
