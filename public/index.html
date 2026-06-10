@@ -277,6 +277,12 @@ function fmtTokens(n) {
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return String(n);
 }
+function fmtBytes(n) {
+  n = n || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + ' KB';
+  return n + ' B';
+}
 function fmtDate(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -883,6 +889,42 @@ function signalsSection(s) {
     <div class="hint" style="margin-top:14px"><strong>Extended thinking</strong> is the share of assistant turns that used thinking (a frequency — the thinking text isn't stored, so its token cost can't be split out). <strong>Compactions</strong> are context summarizations (long-session pressure). <strong>Truncated</strong> = turns cut off at the token limit. <strong>Web requests</strong> bill per request; the dollar figure is an estimate from <code>pricing.json</code>.</div>
   </div>`;
 }
+// Command & prompt history (history.jsonl — durable across transcript pruning).
+// A slash-command leaderboard + prompt counts. Only command NAMES are read here,
+// never prompt text. Scoped to the project's cwd on a project view, global on the
+// all-projects view; absent (undefined) on the single-session view, so it hides.
+function commandsSection(h) {
+  if (!h || !h.available || !h.prompts) return '';
+  const cards = [
+    `<div class="eff"><div class="label">Prompts</div><div class="value">${fmtNum(h.prompts)}</div></div>`,
+    `<div class="eff"><div class="label">Slash commands</div><div class="value">${fmtNum(h.commandPrompts)}<span class="u">${fmtNum(h.distinctCommands)} distinct</span></div></div>`,
+    `<div class="eff"><div class="label">Pasted</div><div class="value">${fmtNum(h.pasted)}</div></div>`,
+    `<div class="eff"><div class="label">Active days</div><div class="value">${fmtNum(h.activeDays)}</div></div>`,
+  ].join('');
+  const chips = (h.topCommands || []).map((c) => `<span class="chip">${esc(c.name)}<b>${fmtNum(c.count)}</b></span>`).join('');
+  return `<div class="section"><h3>Commands &amp; prompts</h3>
+    <div class="effgrid">${cards}</div>
+    ${chips ? `<div class="tools" style="margin-top:16px">${chips}</div>` : ''}
+    <div class="hint" style="margin-top:10px">From <code>history.jsonl</code>, which outlives pruned transcripts. Only the command name is read — never the prompt text. "Pasted" = prompts that carried pasted content.</div>
+  </div>`;
+}
+// Plan-mode usage (plans/ markdown): counts, size, and recent plan titles by
+// file modified-date. Titles and sizes only. All-projects view only (plans carry
+// no project attribution), so it's hidden elsewhere (d.plans undefined).
+function plansSection(p) {
+  if (!p || !p.available) return '';
+  const rows = (p.recent || []).map((pl) =>
+    `<span class="item"><span class="dot" style="background:#6ea8fe"></span>${esc(pl.title)} <span style="opacity:.6">— ${shortDate(pl.day)}, ${fmtBytes(pl.bytes)}</span></span>`).join('');
+  return `<div class="section"><h3>Plans</h3>
+    <div class="effgrid">
+      <div class="eff"><div class="label">Plans (all time)</div><div class="value">${fmtNum(p.total)}</div></div>
+      <div class="eff"><div class="label">In range</div><div class="value">${fmtNum(p.inRange)}</div></div>
+      <div class="eff"><div class="label">Size in range</div><div class="value">${fmtBytes(p.bytesInRange)}</div></div>
+    </div>
+    ${rows ? `<div class="legend" style="margin-top:14px">${rows}</div>` : ''}
+    <div class="hint" style="margin-top:10px">Plan-mode documents under <code>~/.claude/plans</code>, by file modified-date. Titles and sizes only.</div>
+  </div>`;
+}
 // Turn latency / time-cost: how much wall-clock time the work took, where it
 // went (duration histogram), and spend per hour of active time.
 function timeSection(t) {
@@ -1289,6 +1331,8 @@ function renderOverview(d, opts) {
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
     ${signalsSection(d.signals)}
+    ${commandsSection(d.history)}
+    ${plansSection(d.plans)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1350,6 +1394,8 @@ function renderDetail(d, opts) {
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
     ${signalsSection(d.signals)}
+    ${commandsSection(d.history)}
+    ${plansSection(d.plans)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1407,6 +1453,8 @@ function renderSession(d) {
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
     ${signalsSection(d.signals)}
+    ${commandsSection(d.history)}
+    ${plansSection(d.plans)}
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}

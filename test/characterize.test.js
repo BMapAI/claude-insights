@@ -89,6 +89,8 @@ const projectsDir = buildFixture();
 process.env.CLAUDE_PROJECTS_DIR = projectsDir;
 process.env.PRICING_FILE = path.join(projectsDir, 'no-such-pricing.json'); // → DEFAULT_PRICING
 process.env.CONFIG_FILE = path.join(projectsDir, 'no-such-config.json');   // → no budget / plan fee
+process.env.HISTORY_FILE = path.join(projectsDir, 'no-such-history.jsonl'); // → empty command analytics
+process.env.PLANS_DIR = path.join(projectsDir, 'no-such-plans');            // → empty plan analytics
 delete process.env.CLAUDE_LEDGER_DATA;
 delete process.env.LEDGER_PERSIST;
 delete process.env.PLAN_MONTHLY_FEE;
@@ -131,6 +133,8 @@ test('the fixture exercises the full aggregation surface', () => {
   assert.ok(o.signals && Array.isArray(o.signals.stopReasons), 'per-turn signals block present');
   assert.equal(o.signals.thinkingTurns, 0, 'fixture has no extended-thinking turns');
   assert.equal(o.signals.compactions, 0, 'fixture has no compactions');
+  assert.equal(o.history.available, false, 'no history.jsonl alongside the fixture');
+  assert.equal(o.plans.available, false, 'no plans/ alongside the fixture');
   assert.equal(o.reliability.totalErrors, 1, 'the failed Bash result is counted');
   assert.ok(o.reliability.wastedCost > 0, 'recovery spend after the error is priced');
   assert.deepEqual(o.output, { commits: 1, prs: 1, edits: 2, filesEdited: 2,

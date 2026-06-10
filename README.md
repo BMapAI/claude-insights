@@ -93,6 +93,16 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   **Claude Code version** (so a cost shift after an upgrade is visible). Each split is
   shown only when there's more than one key to compare — branch and version split into a
   top-8-plus-"other" bar; subagent and tier panels stay hidden until they actually occur.
+- **Commands & prompts** — a slash-command leaderboard and prompt counts from
+  `history.jsonl`, Claude Code's submitted-prompt log. Because that log outlives the
+  transcripts (which Claude Code prunes), it's a more durable activity spine — you can
+  see your most-used commands and prompt cadence even for sessions whose transcripts are
+  gone. **Only the command name is read, never the prompt text.** Global on the
+  All-projects view, scoped to the project's directory on a per-project view.
+- **Plans** — plan-mode usage from the `plans/` markdown directory: how many plans
+  exist, how many fall in the selected range (by file date), their total size, and the
+  recent plan titles. Titles and sizes only. (All-projects view; plans carry no project
+  attribution.)
 - **Turn signals** — lighter per-turn tallies that ride alongside the cost: how turns
   ended (a stop-reason mini-bar, with `max_tokens` **truncations** and **refusals**
   flagged as friction), context **compactions** (count, trigger, and how full the

@@ -19,6 +19,12 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PROJECTS_DIR =
   process.env.CLAUDE_PROJECTS_DIR ||
   path.join(os.homedir(), '.claude', 'projects');
+// Sidecar sources outside projects/: the prompt/command history log and the
+// plan-mode markdown dir. Default to siblings of projects/ (the ~/.claude root);
+// each is overridable and treated as optional (missing → empty analytics).
+const CLAUDE_DIR = process.env.CLAUDE_DIR || path.dirname(PROJECTS_DIR);
+const HISTORY_FILE = process.env.HISTORY_FILE || path.join(CLAUDE_DIR, 'history.jsonl');
+const PLANS_DIR = process.env.PLANS_DIR || path.join(CLAUDE_DIR, 'plans');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PRICING_FILE = process.env.PRICING_FILE || path.join(__dirname, 'pricing.json');
 const CONFIG_FILE = process.env.CONFIG_FILE || path.join(__dirname, 'config.json');
@@ -1163,6 +1169,112 @@ function archivedFor(folder, liveIds) {
   return out;
 }
 
+// --- Command history + plans (sidecar sources) ------------------------------
+// history.jsonl is Claude Code's submitted-prompt log — one
+// { display, project (cwd), sessionId, timestamp } per prompt. It outlives the
+// transcripts (which Claude Code prunes after cleanupPeriodDays), so it's a more
+// durable activity spine. We deliberately keep ONLY the slash-command name (the
+// first token, when the prompt is a command) plus per-prompt counts — never the
+// prompt text itself. plans/ holds plan-mode markdown; we read titles + sizes.
+const COMMAND_RE = /^(\/[A-Za-z0-9:_-]+)/;
+let historyCache = { mtimeMs: null, size: null, entries: null };
+function loadHistoryEntries() {
+  let st;
+  try { st = fs.statSync(HISTORY_FILE); } catch { return []; }
+  if (historyCache.entries && historyCache.mtimeMs === st.mtimeMs && historyCache.size === st.size) {
+    return historyCache.entries;
+  }
+  let raw;
+  try { raw = fs.readFileSync(HISTORY_FILE, 'utf8'); } catch { return []; }
+  const entries = [];
+  forEachLine(raw, (line) => {
+    let o;
+    try { o = JSON.parse(line); } catch { return; }
+    const ts = o.timestamp;
+    const day = typeof ts === 'number' && isFinite(ts) ? new Date(ts).toISOString().slice(0, 10) : null;
+    const display = typeof o.display === 'string' ? o.display.trim() : '';
+    const m = COMMAND_RE.exec(display);
+    entries.push({
+      day,
+      project: typeof o.project === 'string' ? o.project : null,
+      command: m ? m[1] : null, // command NAME only — no args, no prompt text
+      pasted: !!(o.pastedContents && typeof o.pastedContents === 'object' && Object.keys(o.pastedContents).length),
+    });
+  });
+  historyCache = { mtimeMs: st.mtimeMs, size: st.size, entries };
+  return entries;
+}
+
+// Command/prompt analytics for a range. scope === undefined → all projects;
+// a string → only prompts whose project cwd equals it exactly (per-project view).
+// Entries without a parseable timestamp can only be counted for an all-time range.
+function analyzeHistory(from, to, scope) {
+  const entries = loadHistoryEntries();
+  const commands = {};
+  const days = new Set();
+  let prompts = 0, commandPrompts = 0, pasted = 0;
+  for (const e of entries) {
+    if (scope !== undefined && e.project !== scope) continue;
+    if (e.day) { if (!inRange(e.day, from, to)) continue; }
+    else if (from || to) continue;
+    prompts += 1;
+    if (e.pasted) pasted += 1;
+    if (e.day) days.add(e.day);
+    if (e.command) { commandPrompts += 1; commands[e.command] = (commands[e.command] || 0) + 1; }
+  }
+  const topCommands = Object.entries(commands)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+  return {
+    available: entries.length > 0,
+    prompts, commandPrompts, pasted, activeDays: days.size,
+    distinctCommands: topCommands.length,
+    topCommands: topCommands.slice(0, 20),
+  };
+}
+
+// Plan-mode files: title (first markdown heading, else filename) + byte size +
+// mtime day. Cached on the directory's mtime (catches add/remove — the common
+// case; an in-place content edit is rare and not worth re-reading every file for).
+let plansCache = { mtimeMs: null, plans: null };
+function loadPlans() {
+  let st;
+  try { st = fs.statSync(PLANS_DIR); } catch { return []; }
+  if (plansCache.plans && plansCache.mtimeMs === st.mtimeMs) return plansCache.plans;
+  let names;
+  try { names = fs.readdirSync(PLANS_DIR); } catch { return []; }
+  const plans = [];
+  for (const name of names) {
+    if (!name.endsWith('.md')) continue;
+    const fp = path.join(PLANS_DIR, name);
+    let s;
+    try { s = fs.statSync(fp); } catch { continue; }
+    if (!s.isFile()) continue;
+    let title = name.replace(/\.md$/, '');
+    try {
+      const m = fs.readFileSync(fp, 'utf8').slice(0, 4096).match(/^#\s+(.+)$/m);
+      if (m) title = m[1].trim();
+    } catch { /* keep filename title */ }
+    plans.push({ title, bytes: s.size, day: new Date(s.mtimeMs).toISOString().slice(0, 10) });
+  }
+  plansCache = { mtimeMs: st.mtimeMs, plans };
+  return plans;
+}
+
+// Plan analytics for a range (filtered by file mtime day).
+function analyzePlans(from, to) {
+  const plans = loadPlans();
+  const ranged = plans.filter((p) => inRange(p.day, from, to));
+  return {
+    available: plans.length > 0,
+    total: plans.length,
+    inRange: ranged.length,
+    bytesInRange: ranged.reduce((s, p) => s + p.bytes, 0),
+    recent: ranged.slice().sort((a, b) => b.day.localeCompare(a.day)).slice(0, 10)
+      .map((p) => ({ title: p.title, bytes: p.bytes, day: p.day })),
+  };
+}
+
 // --- Date filtering ---------------------------------------------------------
 function inRange(day, from, to) {
   if (from && day < from) return false;
@@ -1464,6 +1576,7 @@ function projectDetail(folder, from, to) {
     efficiency: c.efficiency,
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
+    history: analyzeHistory(from, to, cwd || ''),
   };
 }
 
@@ -1662,6 +1775,8 @@ function overview(from, to) {
     efficiency: c.efficiency,
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints }),
+    history: analyzeHistory(from, to),
+    plans: analyzePlans(from, to),
     worklog: buildWorkLog({ from, to, cost: c.totals.cost, sessions: gacc.sessionCount, output: c.output, time: c.time, projects, themes: topThemes(themeWords, 6) }),
   };
 }
@@ -2158,6 +2273,10 @@ module.exports = {
   projectDetail,
   overview,
   listProjects,
+  loadHistoryEntries,
+  analyzeHistory,
+  loadPlans,
+  analyzePlans,
   toCSV,
   csvCell,
   server,

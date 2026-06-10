@@ -448,6 +448,22 @@
         "detail": "alpha is 68% of all spend ($0.02)."
       }
     ],
+    "history": {
+      "available": false,
+      "prompts": 0,
+      "commandPrompts": 0,
+      "pasted": 0,
+      "activeDays": 0,
+      "distinctCommands": 0,
+      "topCommands": []
+    },
+    "plans": {
+      "available": false,
+      "total": 0,
+      "inRange": 0,
+      "bytesInRange": 0,
+      "recent": []
+    },
     "worklog": {
       "from": "2023-01-01",
       "to": "2023-12-31",
@@ -890,6 +906,15 @@
       "costPerCommit": 0.024135000000000007,
       "costPerFile": 0.012067500000000004
     },
-    "insights": []
+    "insights": [],
+    "history": {
+      "available": false,
+      "prompts": 0,
+      "commandPrompts": 0,
+      "pasted": 0,
+      "activeDays": 0,
+      "distinctCommands": 0,
+      "topCommands": []
+    }
   }
 }
