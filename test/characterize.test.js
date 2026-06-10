@@ -88,8 +88,11 @@ function buildFixture() {
 const projectsDir = buildFixture();
 process.env.CLAUDE_PROJECTS_DIR = projectsDir;
 process.env.PRICING_FILE = path.join(projectsDir, 'no-such-pricing.json'); // → DEFAULT_PRICING
+process.env.CONFIG_FILE = path.join(projectsDir, 'no-such-config.json');   // → no budget / plan fee
 delete process.env.CLAUDE_LEDGER_DATA;
 delete process.env.LEDGER_PERSIST;
+delete process.env.PLAN_MONTHLY_FEE;
+delete process.env.MONTHLY_BUDGET;
 const L = require('../server.js');
 
 const actual = { ov: L.overview(FROM, TO), pd: L.projectDetail(ALPHA, FROM, TO) };

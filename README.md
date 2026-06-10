@@ -4,7 +4,8 @@ A zero-dependency cost / ROI analyzer for [Claude Code](https://claude.com/claud
 
 It reads the session transcripts under `~/.claude/projects`, attributes token usage
 to per-model pricing, and serves a small web dashboard where you can pick a project
-(or view all at once) and see what it actually cost.
+(or view all at once) and see what it actually cost — with a glanceable
+**"is the AI paying off?"** verdict up top before the detail.
 
 ![Claude Ledger — all-projects overview](docs/overview.png)
 
@@ -16,6 +17,15 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 
 ## Features
 
+- **"Is it paying off?" verdict** — the bottom line, up top: a glanceable
+  good / ok / watch read on whether the AI returns your investment, shown above
+  everything else on the All-projects view. It grades only what's honestly
+  observable — **value for money** (your range's API-equivalent usage vs your
+  monthly plan fee, prorated to the range), **efficiency** (cache reuse + retry /
+  friction spend), and **direction** (is spend efficiency improving vs the prior
+  period) — and shows **output** (commits / files) *without* grading it, because
+  whether the work was meaningful is your call, not the tool's. Set `planMonthlyFee`
+  to unlock the value-for-money grade.
 - **"Worth a look" signals** — a ranked panel at the top of each view that surfaces
   what actually stands out in the selected range: a spend spike, a pricey session,
   concentrated spend, recovery/friction cost, a big trend vs the prior period, heavy
@@ -33,7 +43,8 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 - **All-projects rollup** — combined totals plus a sortable projects-by-spend
   leaderboard (click a row to drill in).
 - **Session drill-down** — click any session to see its prompts, cost-per-turn
-  timeline, tool usage, duration, and totals.
+  timeline, tool usage, duration, and totals — plus a notice if any malformed
+  transcript lines had to be skipped, so an undercount is never silent.
 - **Shareable URLs** — the selected project, session, and date range live in the
   address bar, so any view is bookmarkable, linkable, and back/forward-navigable.
 - **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
@@ -183,7 +194,8 @@ the subscription — how much metered API the same work would have cost:
 …or `PLAN_MONTHLY_FEE=200 node server.js`. The All-projects view then shows a **Plan
 value** panel: month-to-date API-equivalent spend, your flat fee, and how many times
 over the fee your usage represents (with a projected month-end multiple). Leave it
-unset/`null` to hide the panel.
+unset/`null` to hide the panel. The same fee also powers the **value-for-money**
+grade in the "is it paying off?" verdict at the top of the view.
 
 ## Pricing model
 
@@ -286,7 +298,8 @@ commits, and files edited. Read-only like the rest of the app.
   per-entrypoint spend (`topEntrypoints`), a `reliability` summary (tool error rates +
   recovery spend), a `time` summary (turn-latency stats + histogram), and an `output`
   summary (commits / PRs / files touched + cost-per-unit). `/api/overview` also returns
-  a `plan` block (API-equivalent usage vs a flat fee) when one is configured. Endpoints:
+  a `plan` block (API-equivalent usage vs a flat fee) when one is configured, plus a
+  `verdict` (the glanceable "is it paying off?" ROI grade). Endpoints:
   `/api/projects`, `/api/overview`, `/api/project/:id`, `/api/session/:project/:id`
   (all accept `?from=YYYY-MM-DD&to=YYYY-MM-DD`).
 - `public/index.html` — the dashboard (vanilla JS, no build step).

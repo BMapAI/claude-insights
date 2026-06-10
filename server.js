@@ -476,6 +476,88 @@ function outputStats(o, cost) {
   };
 }
 
+// --- ROI verdict ("is the AI paying off?") ----------------------------------
+// A glanceable good/ok/warn grade synthesized from metrics already computed. The
+// honest stance: grade only what's observable — value-for-money (usage vs the
+// plan fee), and spend efficiency (cache reuse + retry/friction). OUTPUT volume
+// is shown but NOT graded (there's no honest baseline for "is N commits good",
+// and quality is unobservable — that's the user's call). Thresholds live here so
+// they're easy to find and tune.
+const VERDICT = {
+  leverageStrong: 3,    // range usage >= 3x the prorated plan fee → strong
+  leverageOk: 1,        // >= 1x → you got more than you paid for; < 1x → underwater
+  cacheGood: 0.70,      // cache hit rate at/above this is "lean"
+  cacheWeak: 0.40,      // below this is "leaky"
+  frictionLean: 0.10,   // recovery/retry spend / total cost at/below this is "lean"
+  frictionLeaky: 0.25,  // at/above this is "leaky"
+  avgMonthDays: 30.44,  // to prorate a monthly fee across an arbitrary range
+  trendMargin: 0.05,    // min change in (cacheHit − friction) to call a direction
+};
+
+// rangeDays: the inclusive day-span the verdict covers (selected range, or the
+// data span when the range is unbounded). planFee is the monthly subscription
+// fee or null. Returns null when there's nothing to grade.
+function computeVerdict(m) {
+  const cost = m.cost || 0;
+  if (cost <= 0) return null;
+
+  // Value for money — only honestly gradeable against a flat fee. Prorate the
+  // monthly fee across the range so it lines up with the range's API-equiv spend.
+  let value = null;
+  if (m.planFee != null && m.planFee > 0 && m.rangeDays > 0) {
+    const proratedFee = m.planFee * (m.rangeDays / VERDICT.avgMonthDays);
+    const leverage = proratedFee > 0 ? cost / proratedFee : null;
+    let tone = 'ok';
+    if (leverage >= VERDICT.leverageStrong) tone = 'good';
+    else if (leverage < VERDICT.leverageOk) tone = 'warn';
+    value = { tone, leverage, proratedFee, monthlyFee: m.planFee };
+  }
+
+  // Efficiency — lean vs leaky spend (high cache reuse + low retry friction).
+  const friction = cost > 0 ? (m.wastedCost || 0) / cost : 0;
+  const hit = m.cacheHitRate || 0;
+  let effTone = 'ok';
+  if (friction >= VERDICT.frictionLeaky || hit < VERDICT.cacheWeak) effTone = 'warn';
+  else if (friction <= VERDICT.frictionLean && hit >= VERDICT.cacheGood) effTone = 'good';
+  const efficiency = { tone: effTone, cacheHitRate: hit, friction };
+
+  // Output — counted, deliberately not graded.
+  const output = {
+    tone: 'info',
+    commits: m.output.commits,
+    prs: m.output.prs,
+    filesEdited: m.output.filesEdited,
+    costPerCommit: m.output.costPerCommit,
+    costPerFile: m.output.costPerFile,
+  };
+
+  // Headline: synthesize one glanceable status + tone from the graded signals.
+  // value:warn (underwater) is the strongest negative; then efficiency:warn.
+  let status, tone;
+  if (value && value.tone === 'warn') { status = 'below_fee'; tone = 'warn'; }
+  else if (efficiency.tone === 'warn') { status = 'worth_a_look'; tone = 'warn'; }
+  else if (value && value.tone === 'good') { status = 'paying_off'; tone = 'good'; }
+  else if (!value) { status = efficiency.tone === 'good' ? 'lean_no_fee' : 'set_fee'; tone = efficiency.tone === 'good' ? 'good' : 'ok'; }
+  else { status = 'paying_off'; tone = 'ok'; } // value ok, efficiency ok/good
+
+  // Direction — is spend efficiency improving vs the prior equal-length period?
+  // Graded on the same lean-spend score the Efficiency row uses (cache reuse
+  // minus retry friction), so "improving" means unambiguously leaner spend, not
+  // a quality claim. Null when there's no prior period with data to compare.
+  let direction = null;
+  if (m.prev) {
+    const cur = efficiency.cacheHitRate - efficiency.friction;
+    const prv = (m.prev.cacheHitRate || 0) - (m.prev.friction || 0);
+    const delta = cur - prv;
+    let dTone = 'ok', trend = 'steady';
+    if (delta >= VERDICT.trendMargin) { dTone = 'good'; trend = 'improving'; }
+    else if (delta <= -VERDICT.trendMargin) { dTone = 'warn'; trend = 'worsening'; }
+    direction = { tone: dTone, trend, delta, prevCacheHitRate: m.prev.cacheHitRate, prevFriction: m.prev.friction };
+  }
+
+  return { tone, status, value, efficiency, output, direction, rangeDays: m.rangeDays };
+}
+
 // --- Insights ("worth a look") ----------------------------------------------
 // Surface what stands out in the current range so the dashboard points you at it
 // instead of presenting every panel with equal weight. Purely descriptive
@@ -1021,7 +1103,7 @@ function aggregateSession(s, from, to) {
 // unique to it (the session table; the project leaderboard + budget/plan/worklog).
 function newAccumulator() {
   return {
-    grand: {}, prevGrand: {},
+    grand: {}, prevGrand: {}, prevErrorFollowup: {},
     bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
     tools: {}, toolErrors: {}, errorFollowup: {},
     dayMap: {}, punch: emptyPunchGrid(), durations: [],
@@ -1040,6 +1122,8 @@ function foldPrev(acc, pa) {
   if (!pa || !pa.has) return;
   acc.prevPrompts += pa.userPrompts;
   for (const [fam, b] of Object.entries(pa.byFamily)) addBundle(famBundleIn(acc.prevGrand, fam), b);
+  // Prior-period recovery spend, so the verdict can grade the efficiency trend.
+  for (const [fam, b] of Object.entries(pa.errorFollowup)) addBundle(famBundleIn(acc.prevErrorFollowup, fam), b);
 }
 
 // Fold a session's in-range aggregate (agg = aggregateSession(s, from, to), with
@@ -1330,8 +1414,40 @@ function overview(from, to) {
     today: M.today,
   } : null;
 
+  // ROI verdict — graded over the effective range (the selected range, or the
+  // data span when unbounded) so value-for-money lines up with the range's spend.
+  const effFrom = from || gacc.dataStart;
+  const effTo = to || gacc.dataEnd;
+  let rangeDays = 1;
+  if (effFrom && effTo) {
+    const d = Math.round((Date.parse(effTo + 'T00:00:00Z') - Date.parse(effFrom + 'T00:00:00Z')) / 86400000) + 1;
+    if (Number.isFinite(d) && d > 0) rangeDays = d;
+  }
+  // Prior-period efficiency snapshot for the direction trend (only when the
+  // prior equal-length window actually has spend to compare against).
+  let prevEff = null;
+  if (prev) {
+    const prevCost = priceBundles(gacc.prevGrand).cost;
+    if (prevCost > 0) {
+      prevEff = {
+        cacheHitRate: efficiencyStats(gacc.prevGrand, 0, 0).cacheHitRate,
+        friction: priceBundles(gacc.prevErrorFollowup).cost / prevCost,
+      };
+    }
+  }
+  const verdict = computeVerdict({
+    cost: c.totals.cost,
+    cacheHitRate: c.efficiency.cacheHitRate,
+    wastedCost: c.reliability.wastedCost,
+    output: c.output,
+    planFee,
+    rangeDays,
+    prev: prevEff,
+  });
+
   return {
     projectCount,
+    verdict,
     totals: {
       cost: c.totals.cost,
       costByFamily: c.totals.costByFamily,
@@ -1796,6 +1912,8 @@ module.exports = {
   timeStats,
   recordOutput,
   outputStats,
+  computeVerdict,
+  VERDICT,
   computeInsights,
   promMetrics,
   buildWorkLog,

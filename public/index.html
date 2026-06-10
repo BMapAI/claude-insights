@@ -102,6 +102,19 @@
   .insight-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; }
   .insight-title { font-weight: 600; font-size: 13px; }
   .insight-detail { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+
+  /* ROI verdict — the glanceable "is the AI paying off?" headline + sub-scores. */
+  .verdict { border-width: 1px; }
+  .vhead { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+  .vicon { font-size: 22px; line-height: 1.1; }
+  .vtitle { font-size: 19px; font-weight: 700; }
+  .vsummary { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .vrows { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .vrow { display: grid; grid-template-columns: 150px 150px 1fr; gap: 12px; align-items: baseline; background: var(--panel); padding: 11px 14px; }
+  .vk { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+  .vv { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .vh { color: var(--muted); font-size: 12px; line-height: 1.4; }
+  @media (max-width: 720px) { .vrow { grid-template-columns: 1fr; gap: 3px; } }
   .wl-headline { font-size: 15px; font-weight: 600; }
   .wl-meta { color: var(--muted); font-size: 12px; font-weight: 400; }
   .wl-projects { margin-top: 14px; display: grid; gap: 10px; }
@@ -665,6 +678,63 @@ function reliabilitySection(r, totalCost) {
     <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
   </div>`;
 }
+// ROI verdict — the bottom line up top: a glanceable good/ok/warn read on whether
+// the AI is paying off. Grades only value-for-money (usage vs plan fee) and spend
+// efficiency; output is counted, not graded (quality is the user's call).
+function vtone(t) { return t === 'good' ? 'var(--good)' : t === 'warn' ? 'var(--warn)' : 'var(--accent-2)'; }
+function verdictSection(v) {
+  if (!v) return '';
+  const TITLE = {
+    paying_off:   'Paying off',
+    below_fee:    'Below what you pay for',
+    worth_a_look: 'Worth a look',
+    lean_no_fee:  'Spending leanly',
+    set_fee:      'Looking OK',
+  };
+  const title = TITLE[v.status] || 'Summary';
+  const icon = v.tone === 'good' ? '✅' : (v.tone === 'warn' ? '⚠' : '•'); // icon tracks tone, not status
+  const lev = (x) => x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(1)) + '×';
+  const pct = (x) => (x * 100).toFixed(0) + '%';
+  const effWord = v.efficiency.tone === 'good' ? 'lean' : (v.efficiency.tone === 'warn' ? 'leaky' : 'fair');
+  const o = v.output;
+
+  const summary = [
+    v.value ? `${lev(v.value.leverage)} your plan` : 'plan fee not set',
+    `${effWord} spend`,
+    `${fmtNum(o.commits)} commit${o.commits === 1 ? '' : 's'}`,
+  ].join('  ·  ');
+
+  const rows = [];
+  if (v.value) {
+    rows.push(['Value for money',
+      `<b style="color:${vtone(v.value.tone)}">${lev(v.value.leverage)}</b> your plan fee`,
+      `vs ${fmtUSD(v.value.proratedFee)} of fee over ${fmtNum(v.rangeDays)}d — API-equivalent usage ${v.value.leverage >= 1 ? 'above' : 'below'} what you paid.`]);
+  } else {
+    rows.push(['Value for money', '<span class="loading">not graded</span>',
+      'Set <code>planMonthlyFee</code> in config.json (or <code>PLAN_MONTHLY_FEE</code>) to grade whether usage beats your subscription.']);
+  }
+  rows.push(['Efficiency', `<b style="color:${vtone(v.efficiency.tone)}">${effWord}</b>`,
+    `${pct(v.efficiency.cacheHitRate)} cache hit · ${pct(v.efficiency.friction)} of spend on retries / friction.`]);
+  if (v.direction) {
+    const dir = v.direction;
+    const arrow = dir.trend === 'improving' ? '▲' : (dir.trend === 'worsening' ? '▼' : '▬');
+    rows.push(['Direction',
+      `<b style="color:${vtone(dir.tone)}">${arrow} ${dir.trend}</b>`,
+      `spend efficiency vs the prior period — cache ${pct(dir.prevCacheHitRate)}→${pct(v.efficiency.cacheHitRate)}, friction ${pct(dir.prevFriction)}→${pct(v.efficiency.friction)}.`]);
+  }
+  rows.push(['Output',
+    `${fmtNum(o.commits)} commits · ${fmtNum(o.filesEdited)} files${o.prs ? ` · ${fmtNum(o.prs)} PRs` : ''}`,
+    `${o.commits ? fmtUSD(o.costPerCommit) + ' / commit · ' : ''}quality is yours to judge — Ledger counts, it doesn't grade.`]);
+
+  const rowHtml = rows.map(([k, val, hint]) =>
+    `<div class="vrow"><div class="vk">${k}</div><div class="vv">${val}</div><div class="vh">${hint}</div></div>`).join('');
+  return `<div class="section verdict" style="border-color:${vtone(v.tone)}">
+    <div class="vhead"><span class="vicon" style="color:${vtone(v.tone)}">${icon}</span>
+      <div><div class="vtitle">${esc(title)} <span class="vsummary" style="text-transform:uppercase;letter-spacing:.4px;font-size:11px">· is the AI paying off?</span></div>
+      <div class="vsummary">${esc(summary)}</div></div></div>
+    <div class="vrows">${rowHtml}</div>
+  </div>`;
+}
 // "Worth a look" — the ranked signals that stand out in the current range, shown
 // first so the dashboard points you at what matters before the wall of detail.
 function insightsSection(items) {
@@ -938,6 +1008,7 @@ function renderOverview(d, opts) {
       <h2>All projects</h2>
       <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
     </div>
+    ${verdictSection(d.verdict)}
     ${insightsSection(d.insights)}
     ${budgetSection(d.budget)}
     ${planSection(d.plan)}

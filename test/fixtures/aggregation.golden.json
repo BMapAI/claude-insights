@@ -1,6 +1,26 @@
 {
   "ov": {
     "projectCount": 2,
+    "verdict": {
+      "tone": "ok",
+      "status": "set_fee",
+      "value": null,
+      "efficiency": {
+        "tone": "ok",
+        "cacheHitRate": 0.42857142857142855,
+        "friction": 0.05893082643468501
+      },
+      "output": {
+        "tone": "info",
+        "commits": 1,
+        "prs": 1,
+        "filesEdited": 2,
+        "costPerCommit": 0.035635,
+        "costPerFile": 0.0178175
+      },
+      "direction": null,
+      "rangeDays": 365
+    },
     "totals": {
       "cost": 0.035635,
       "costByFamily": {
