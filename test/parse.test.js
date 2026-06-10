@@ -149,3 +149,45 @@ test('parseSession tolerates malformed input and missing files', () => {
 test('parseSession caches by mtime + size (same object on repeat reads)', () => {
   assert.strictEqual(L.parseSession(file), L.parseSession(file));
 });
+
+// --- Batch 1: branch / subagent / service-tier / CLI-version dimensions ------
+test('parseSession defaults the new dimensions when the fields are absent', () => {
+  const d = parsed.days[DAY];
+  // The base fixture carries gitBranch=main, no isSidechain/service_tier/version,
+  // so each dimension folds the whole day's opus bundle into its fallback key.
+  assert.deepEqual(d.byBranch.main.opus, EXPECTED_OPUS, 'branch from gitBranch');
+  assert.deepEqual(d.byAgentKind.main.opus, EXPECTED_OPUS, 'main thread when no isSidechain');
+  assert.deepEqual(d.byTier.standard.opus, EXPECTED_OPUS, 'standard tier when service_tier unset');
+  assert.deepEqual(d.byVersion.unknown.opus, EXPECTED_OPUS, 'unknown version when none on the line');
+});
+
+test('parseSession splits spend by branch / subagent / tier / version', () => {
+  const day = '2026-03-04';
+  const ts = (s) => `${day}T09:00:${s}.000Z`;
+  const objs = [
+    // user line seeds the session branch = feature-x (the per-message fallback).
+    { type: 'user', cwd: '/home/demo/acme', gitBranch: 'feature-x', version: '2.1.170', timestamp: ts('01'),
+      message: { content: 'work on feature x' } },
+    // A: main thread, standard tier, v2.1.170, branch feature-x (inherited).
+    { type: 'assistant', version: '2.1.170', timestamp: ts('05'),
+      message: { model: 'claude-opus-4-8', usage: { input_tokens: 100, output_tokens: 50 }, content: [] } },
+    // B: a Task subagent turn, priority tier, v2.1.170, branch feature-x.
+    { type: 'assistant', version: '2.1.170', isSidechain: true, timestamp: ts('10'),
+      message: { model: 'claude-opus-4-8', usage: { input_tokens: 200, output_tokens: 60, service_tier: 'priority' }, content: [] } },
+    // C: main thread, standard tier, v2.2.0, branch main (line-level override).
+    { type: 'assistant', gitBranch: 'main', version: '2.2.0', timestamp: ts('15'),
+      message: { model: 'claude-opus-4-8', usage: { input_tokens: 300, output_tokens: 70 }, content: [] } },
+  ];
+  const f = path.join(dir, 'vary.jsonl');
+  fs.writeFileSync(f, objs.map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const d = L.parseSession(f).days[day];
+
+  assert.equal(d.byBranch['feature-x'].opus.input, 300, 'feature-x = A+B input');
+  assert.equal(d.byBranch.main.opus.input, 300, 'main = C input');
+  assert.equal(d.byAgentKind.main.opus.input, 400, 'main thread = A+C');
+  assert.equal(d.byAgentKind.subagent.opus.input, 200, 'subagent = B');
+  assert.equal(d.byTier.standard.opus.input, 400, 'standard = A+C');
+  assert.equal(d.byTier.priority.opus.input, 200, 'priority = B');
+  assert.equal(d.byVersion['2.1.170'].opus.input, 300, 'v2.1.170 = A+B');
+  assert.equal(d.byVersion['2.2.0'].opus.input, 300, 'v2.2.0 = C');
+});

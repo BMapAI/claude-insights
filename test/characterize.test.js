@@ -124,6 +124,10 @@ test('the fixture exercises the full aggregation surface', () => {
   assert.deepEqual(o.topSkills.map((s) => s.name), ['code-review'], 'skill attribution folded in');
   assert.deepEqual(o.topMcp.map((s) => s.name), ['github'], 'mcp attribution folded in');
   assert.deepEqual(o.topEntrypoints.map((s) => s.name), ['cli', 'sdk-cli'], 'both entrypoints present');
+  assert.deepEqual(o.topBranches.map((s) => s.name), ['main', 'dev'], 'spend split by git branch (main > dev)');
+  assert.deepEqual(o.topAgentKinds.map((s) => s.name), ['main'], 'all fixture turns are main-thread (no subagents)');
+  assert.deepEqual(o.topTiers.map((s) => s.name), ['standard'], 'tier defaults to standard when unset');
+  assert.deepEqual(o.topVersions.map((s) => s.name), ['unknown'], 'version is unknown when the line carries none');
   assert.equal(o.reliability.totalErrors, 1, 'the failed Bash result is counted');
   assert.ok(o.reliability.wastedCost > 0, 'recovery spend after the error is priced');
   assert.deepEqual(o.output, { commits: 1, prs: 1, edits: 2, filesEdited: 2,

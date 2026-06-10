@@ -232,6 +232,39 @@
         "tokens": 550
       }
     ],
+    "topBranches": [
+      {
+        "name": "main",
+        "cost": 0.024135000000000007,
+        "tokens": 4750
+      },
+      {
+        "name": "dev",
+        "cost": 0.0115,
+        "tokens": 1100
+      }
+    ],
+    "topAgentKinds": [
+      {
+        "name": "main",
+        "cost": 0.035635,
+        "tokens": 5850
+      }
+    ],
+    "topTiers": [
+      {
+        "name": "standard",
+        "cost": 0.035635,
+        "tokens": 5850
+      }
+    ],
+    "topVersions": [
+      {
+        "name": "unknown",
+        "cost": 0.035635,
+        "tokens": 5850
+      }
+    ],
     "topSkills": [
       {
         "name": "code-review",
@@ -645,6 +678,34 @@
         "name": "sdk-cli",
         "cost": 0.00066,
         "tokens": 550
+      }
+    ],
+    "topBranches": [
+      {
+        "name": "main",
+        "cost": 0.024135000000000007,
+        "tokens": 4750
+      }
+    ],
+    "topAgentKinds": [
+      {
+        "name": "main",
+        "cost": 0.024135000000000007,
+        "tokens": 4750
+      }
+    ],
+    "topTiers": [
+      {
+        "name": "standard",
+        "cost": 0.024135000000000007,
+        "tokens": 4750
+      }
+    ],
+    "topVersions": [
+      {
+        "name": "unknown",
+        "cost": 0.024135000000000007,
+        "tokens": 4750
       }
     ],
     "topSkills": [

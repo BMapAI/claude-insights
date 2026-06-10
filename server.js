@@ -812,11 +812,20 @@ function parseSession(filePath) {
       // byModel: { exactModelId -> { family -> bundle } } for the precise model mix.
       // byEntry: { entrypoint -> { family -> bundle } } — interactive (cli) vs
       //   automated (sdk-cli) spend.
+      // byBranch: { gitBranch -> { family -> bundle } } — spend per git branch, so
+      //   cost can be read per feature, not just per session.
+      // byAgentKind: { 'main'|'subagent' -> { family -> bundle } } — how much spend
+      //   was delegated to Task subagents (isSidechain) vs the main thread.
+      // byTier: { service_tier -> { family -> bundle } } — standard vs priority/batch,
+      //   which carry different price multipliers; surfaces a silent tier change.
+      // byVersion: { claudeCodeVersion -> { family -> bundle } } — spend by CLI
+      //   version, so a cost shift can be correlated with an upgrade.
       // turnMs/turns/durations: wall-clock turn latency from `turn_duration`
       //   system records (durations kept for percentiles).
       data.days[key] = {
         userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {},
         byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, byEntry: {}, hours: {},
+        byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
         toolErrors: {}, errorFollowup: {},
         turnMs: 0, turns: 0, durations: [],
         // Output metrics (the "R" in ROI): git commits, PRs opened, and files
@@ -915,6 +924,14 @@ function parseSession(filePath) {
         if (msg.model && msg.model !== '<synthetic>') addBundle(nestFam(day.byModel, msg.model, family), bundle);
         // Interactive (cli) vs automated (sdk-cli) spend, keyed by entrypoint.
         addBundle(nestFam(day.byEntry, o.entrypoint || 'unknown', family), bundle);
+        // Spend per git branch / subagent vs main thread / service tier / CLI
+        // version — same tokens, sliced by a few more dimensions present on the
+        // line. Branch can change mid-session, so read it per message (falling
+        // back to the session's first-seen branch, then 'unknown').
+        addBundle(nestFam(day.byBranch, o.gitBranch || data.gitBranch || 'unknown', family), bundle);
+        addBundle(nestFam(day.byAgentKind, o.isSidechain ? 'subagent' : 'main', family), bundle);
+        addBundle(nestFam(day.byTier, (u.service_tier || 'standard'), family), bundle);
+        addBundle(nestFam(day.byVersion, o.version || 'unknown', family), bundle);
         // Spend on the turn that followed a failed tool result = recovery cost.
         if (pendingError) {
           addBundle(famBundleIn(day.errorFollowup, family), bundle);
@@ -1066,6 +1083,10 @@ function aggregateSession(s, from, to) {
   const byMcp = {};
   const byModel = {};
   const byEntry = {};
+  const byBranch = {};
+  const byAgentKind = {};
+  const byTier = {};
+  const byVersion = {};
   const tools = {};
   const toolErrors = {};
   const errorFollowup = {};
@@ -1095,8 +1116,12 @@ function aggregateSession(s, from, to) {
     mergeByName(byMcp, d.byMcp || {});
     mergeByName(byModel, d.byModel || {});
     mergeByName(byEntry, d.byEntry || {});
+    mergeByName(byBranch, d.byBranch || {});
+    mergeByName(byAgentKind, d.byAgentKind || {});
+    mergeByName(byTier, d.byTier || {});
+    mergeByName(byVersion, d.byVersion || {});
   }
-  return { byFamily, bySkill, byMcp, byModel, byEntry, tools, toolErrors, errorFollowup, editsByFile, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
+  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, byVersion, tools, toolErrors, errorFollowup, editsByFile, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
 }
 
 // --- Shared aggregation -----------------------------------------------------
@@ -1110,6 +1135,7 @@ function newAccumulator() {
   return {
     grand: {}, prevGrand: {}, prevErrorFollowup: {},
     bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
+    byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
     tools: {}, toolErrors: {}, errorFollowup: {},
     dayMap: {}, dayHours: {}, durations: [],
     editsByFile: {},
@@ -1150,6 +1176,10 @@ function foldSession(acc, s, agg, from, to) {
   mergeByName(acc.byMcp, agg.byMcp);
   mergeByName(acc.byModel, agg.byModel);
   mergeByName(acc.byEntry, agg.byEntry);
+  mergeByName(acc.byBranch, agg.byBranch);
+  mergeByName(acc.byAgentKind, agg.byAgentKind);
+  mergeByName(acc.byTier, agg.byTier);
+  mergeByName(acc.byVersion, agg.byVersion);
 
   // Per-day rollup: the daily chart, the day×hour activity grid, latency samples, and the
   // span of days that actually carried activity.
@@ -1185,6 +1215,10 @@ function finalizeCommon(acc, prev) {
   const time = timeStats(acc.durations, acc.userPrompts, totals.cost);
   const topModels = pricedModels(acc.byModel);
   const topEntrypoints = priceByName(acc.byEntry);
+  const topBranches = priceByName(acc.byBranch);
+  const topAgentKinds = priceByName(acc.byAgentKind);
+  const topTiers = priceByName(acc.byTier);
+  const topVersions = priceByName(acc.byVersion);
   const delta = prev ? makeDelta(prev, totals.cost, priceBundles(acc.prevGrand).cost, acc.userPrompts, acc.prevPrompts) : null;
   const output = outputStats({ commits: acc.commits, prs: acc.prs, edits: acc.edits, editsByFile: acc.editsByFile }, totals.cost);
   return {
@@ -1194,6 +1228,10 @@ function finalizeCommon(acc, prev) {
     hourly: priceHourly(acc.dayHours),
     topModels,
     topEntrypoints,
+    topBranches,
+    topAgentKinds,
+    topTiers,
+    topVersions,
     topSkills: priceByName(acc.bySkill),
     topMcp: priceByName(acc.byMcp),
     reliability,
@@ -1284,6 +1322,10 @@ function projectDetail(folder, from, to) {
     topTools: c.topTools,
     topModels: c.topModels,
     topEntrypoints: c.topEntrypoints,
+    topBranches: c.topBranches,
+    topAgentKinds: c.topAgentKinds,
+    topTiers: c.topTiers,
+    topVersions: c.topVersions,
     topSkills: c.topSkills,
     topMcp: c.topMcp,
     reliability: c.reliability,
@@ -1475,6 +1517,10 @@ function overview(from, to) {
     topTools: c.topTools,
     topModels: c.topModels,
     topEntrypoints: c.topEntrypoints,
+    topBranches: c.topBranches,
+    topAgentKinds: c.topAgentKinds,
+    topTiers: c.topTiers,
+    topVersions: c.topVersions,
     topSkills: c.topSkills,
     topMcp: c.topMcp,
     reliability: c.reliability,
@@ -1599,6 +1645,10 @@ function sessionDetail(folder, sessionId) {
   const grand = {};
   const byModel = {};
   const byEntry = {};
+  const byBranch = {};
+  const byAgentKind = {};
+  const byTier = {};
+  const byVersion = {};
   const toolErrors = {};
   const errorFollowup = {};
   const toolNames = {};
@@ -1667,6 +1717,10 @@ function sessionDetail(folder, sessionId) {
         addBundle(grand[family], fb);
         if (msg.model && msg.model !== '<synthetic>') addBundle(nestFam(byModel, msg.model, family), fb);
         addBundle(nestFam(byEntry, o.entrypoint || 'unknown', family), fb);
+        addBundle(nestFam(byBranch, o.gitBranch || out.gitBranch || 'unknown', family), fb);
+        addBundle(nestFam(byAgentKind, o.isSidechain ? 'subagent' : 'main', family), fb);
+        addBundle(nestFam(byTier, (u.service_tier || 'standard'), family), fb);
+        addBundle(nestFam(byVersion, o.version || 'unknown', family), fb);
         if (pendingError) {
           addBundle(famBundleIn(errorFollowup, family), fb);
           pendingError = false;
@@ -1701,6 +1755,10 @@ function sessionDetail(folder, sessionId) {
       .sort((a, b) => b.count - a.count),
     topModels: pricedModels(byModel),
     topEntrypoints: priceByName(byEntry),
+    topBranches: priceByName(byBranch),
+    topAgentKinds: priceByName(byAgentKind),
+    topTiers: priceByName(byTier),
+    topVersions: priceByName(byVersion),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     time: timeStats(durations, out.prompts.length, priced.cost),
     output: outputStats(output, priced.cost),

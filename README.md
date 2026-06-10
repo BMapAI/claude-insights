@@ -86,6 +86,13 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   hands-on interactive work vs `sdk-cli` = headless / SDK-driven automation), so you
   can see how much cost comes from automation rather than you at the keyboard. Shown
   when more than one entrypoint is present.
+- **Spend by branch / subagent / tier / version** — the same turn cost, attributed to
+  four more dimensions Claude Code records on each message: the **git branch** active on
+  the turn (read it as cost *per feature*), **main thread vs Task subagents**
+  (`isSidechain`), **API service tier** (`standard` vs `priority`/`batch`), and the
+  **Claude Code version** (so a cost shift after an upgrade is visible). Each split is
+  shown only when there's more than one key to compare — branch and version split into a
+  top-8-plus-"other" bar; subagent and tier panels stay hidden until they actually occur.
 - **Time & latency** — wall-clock time alongside dollar-cost, from Claude Code's
   `turn_duration` records: total active time, turn count, median and p90 turn duration
   (median, since the tail is long), spend per hour of active time, time per prompt, and

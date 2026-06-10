@@ -801,6 +801,46 @@ function entrypointSection(items) {
     <div class="hint" style="margin-top:10px">Spend by Claude Code entrypoint — <code>cli</code> is hands-on interactive work, <code>sdk-cli</code> is headless / SDK-driven automation.</div>
   </div>`;
 }
+// Generic spend-split panel: a stacked bar + legend over an arbitrary keyed
+// breakdown (git branch, CLI version, …). Shown only with ≥2 keys carrying spend
+// — a single key has no comparison signal (same stance as entrypointSection).
+// `hint` is trusted HTML (callers pass literals, so <code> renders); meta maps a
+// key to a fixed {label,color}, otherwise a label = key and a palette colour.
+const SPLIT_PALETTE = ['#6ea8fe', '#d97757', '#c6a15b', '#5dd6a0', '#b487d8', '#e06c9f', '#7cc7d8', '#8b93a7'];
+const AGENTKIND_META = {
+  main: { label: 'Main thread', color: '#6ea8fe' },
+  subagent: { label: 'Subagents (Task)', color: '#c6a15b' },
+};
+function splitSection(title, items, hint, metaMap) {
+  if (!items || items.length < 2) return '';
+  const total = items.reduce((s, i) => s + i.cost, 0);
+  if (total <= 0) return '';
+  // High-cardinality keys (branches, CLI versions) would otherwise paint dozens
+  // of slivers; show the top few by cost and roll the rest into one "other".
+  const MAX = 8;
+  const shown = items.slice(0, MAX);
+  const otherCost = items.slice(MAX).reduce((s, i) => s + i.cost, 0);
+  const otherN = items.length - shown.length;
+  const meta = (k, i) => (metaMap && metaMap[k]) || { label: k, color: SPLIT_PALETTE[i % SPLIT_PALETTE.length] };
+  const seg = (col, w) => `<div style="width:${(w / total * 100).toFixed(2)}%;background:${col}"></div>`;
+  const item = (col, label, cost) => `<span class="item"><span class="dot" style="background:${col}"></span>${esc(label)} — ${fmtUSD(cost)} (${(cost / total * 100).toFixed(0)}%)</span>`;
+  let bar = shown.map((it, i) => seg(meta(it.name, i).color, it.cost)).join('');
+  let legend = shown.map((it, i) => item(meta(it.name, i).color, meta(it.name, i).label, it.cost)).join('');
+  if (otherCost > 0) {
+    bar += seg('#4a4f5e', otherCost);
+    legend += item('#4a4f5e', `other (${otherN})`, otherCost);
+  }
+  return `<div class="section"><h3>${esc(title)}</h3>
+    <div class="split">${bar}</div><div class="legend">${legend}</div>
+    <div class="hint" style="margin-top:10px">${hint}</div></div>`;
+}
+// The four Batch-1 attribution panels, shared by every view (each guards itself).
+function attributionSplits(d) {
+  return splitSection('Spend by git branch', d.topBranches, 'Cost attributed to the git branch active on each turn — read it as cost per feature/branch.')
+    + splitSection('Main thread vs subagents', d.topAgentKinds, 'How much spend ran in Task <strong>subagents</strong> (<code>isSidechain</code>) vs the main thread.', AGENTKIND_META)
+    + splitSection('Service tier', d.topTiers, 'Spend by API service tier — <code>standard</code> vs <code>priority</code>/<code>batch</code>, which bill at different rates.')
+    + splitSection('Claude Code version', d.topVersions, 'Spend by Claude Code CLI version — a cost shift after an upgrade shows up here.');
+}
 // Turn latency / time-cost: how much wall-clock time the work took, where it
 // went (duration histogram), and spend per hour of active time.
 function timeSection(t) {
@@ -1205,6 +1245,7 @@ function renderOverview(d, opts) {
     ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
+    ${attributionSplits(d)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1264,6 +1305,7 @@ function renderDetail(d, opts) {
     ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
+    ${attributionSplits(d)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
@@ -1319,6 +1361,7 @@ function renderSession(d) {
     </div>
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
+    ${attributionSplits(d)}
     <div class="section"><h3>Cost per turn</h3>${timeline}</div>
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${reliabilitySection(d.reliability, t.cost)}
