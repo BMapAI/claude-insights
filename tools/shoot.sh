@@ -29,7 +29,7 @@ trap 'kill "$SRV" 2>/dev/null || true' EXIT
 curl -s --retry 40 --retry-connrefused --retry-delay 1 -o /dev/null "http://127.0.0.1:$PORT/api/projects"
 
 "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
-  --virtual-time-budget=8000 --window-size=1600,5600 \
+  --virtual-time-budget=8000 --window-size=1600,9200 \
   --screenshot="$OUT" "http://127.0.0.1:$PORT/" 2>/dev/null
 
 echo "Wrote $OUT"
@@ -41,7 +41,7 @@ SESSION_OUT="$DIR/docs/session.png"
 PID=$(curl -s "http://127.0.0.1:$PORT/api/projects" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const p=j.projects.find(x=>x.sessions>=3)||j.projects[0];process.stdout.write(p?p.id:"")})')
 SID=$(curl -s "http://127.0.0.1:$PORT/api/project/$PID" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const ss=(j.sessions||[]).slice().sort((a,b)=>b.cost-a.cost)[0];process.stdout.write(ss?ss.id:"")})')
 "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars \
-  --virtual-time-budget=8000 --window-size=1600,2200 \
+  --virtual-time-budget=8000 --window-size=1600,3200 \
   --screenshot="$SESSION_OUT" "http://127.0.0.1:$PORT/?project=$PID&session=$SID" 2>/dev/null
 echo "Wrote $SESSION_OUT (project=$PID session=$SID)"
 node -e "const b=require('fs').readFileSync('$SESSION_OUT');console.log('  '+b.readUInt32BE(16)+'x'+b.readUInt32BE(20),Math.round(b.length/1024)+'KB')"
