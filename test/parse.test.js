@@ -113,7 +113,7 @@ test('parseSession captures turn-duration latency', () => {
   assert.deepEqual(d.durations, [42000]);
 });
 
-test('parseSession buckets the hour for the punchcard', () => {
+test('parseSession buckets per-hour activity (feeds the day×hour grid)', () => {
   const d = parsed.days[DAY];
   assert.equal(d.hours[14].messages, 2);
   assert.deepEqual(d.hours[14].byFamily.opus, EXPECTED_OPUS);

@@ -717,17 +717,18 @@ function worklogMarkdown(wl) {
   return lines.join('\n') + '\n';
 }
 
-// --- Activity punchcard -----------------------------------------------------
-// A 7×24 grid [weekday][hour] of { byFamily token-bundle, messages } — the
-// classic punchcard, but priced. Built from in-range days only; cost is computed
-// at query time (like everything else) so it tracks date filters + pricing.json.
-function emptyPunchGrid() {
-  return Array.from({ length: 7 }, () =>
-    Array.from({ length: 24 }, () => ({ byFamily: {}, messages: 0 })));
+// --- Activity by day × hour -------------------------------------------------
+// Per-day, per-hour { byFamily token-bundle, messages }, keyed by the actual
+// date (not weekday). Priced at query time like everything else. The client
+// renders it adaptively from the date span: a 24-hour view for a single day, a
+// date × hour heatmap for a short range, or a clickable day list (drilling into
+// one day's hours) for longer ranges.
+function emptyHourRow() {
+  return Array.from({ length: 24 }, () => ({ byFamily: {}, messages: 0 }));
 }
-// Fold one parsed day's per-hour buckets into the grid at that day's weekday row.
-function accumulatePunchcard(grid, day, dayData) {
-  const row = grid[weekdayOf(day)];
+// Fold one parsed day's per-hour buckets into that date's 24-hour row.
+function accumulateDayHours(dayHours, day, dayData) {
+  const row = dayHours[day] || (dayHours[day] = emptyHourRow());
   for (const [h, hb] of Object.entries(dayData.hours || {})) {
     const cell = row[h];
     if (!cell) continue; // ignore an out-of-range hour key, just in case
@@ -735,12 +736,16 @@ function accumulatePunchcard(grid, day, dayData) {
     for (const [fam, b] of Object.entries(hb.byFamily || {})) addBundle(famBundleIn(cell.byFamily, fam), b);
   }
 }
-// Price the grid into two 7×24 number matrices the client renders as a heatmap.
-function pricePunchcard(grid) {
-  return {
-    cost: grid.map((row) => row.map((cell) => priceBundles(cell.byFamily).cost)),
-    messages: grid.map((row) => row.map((cell) => cell.messages)),
-  };
+// Price into { 'YYYY-MM-DD': { cost: number[24], messages: number[24] } }.
+function priceHourly(dayHours) {
+  const out = {};
+  for (const [day, row] of Object.entries(dayHours)) {
+    out[day] = {
+      cost: row.map((cell) => priceBundles(cell.byFamily).cost),
+      messages: row.map((cell) => cell.messages),
+    };
+  }
+  return out;
 }
 
 // --- Transcript parsing (cached by file mtime + size) -----------------------
@@ -800,7 +805,7 @@ function parseSession(filePath) {
   const getDay = (ts) => {
     const key = dayOf(ts, data.start);
     if (!data.days[key]) {
-      // hours: { 0..23 -> { byFamily, messages } } for the activity punchcard.
+      // hours: { 0..23 -> { byFamily, messages } } for the day×hour activity grid.
       // toolErrors: { toolName -> failed-call count }.
       // errorFollowup: { family -> bundle } — usage of assistant turns that ran
       //   right after a failed tool result (a proxy for retry/recovery spend).
@@ -1097,7 +1102,7 @@ function aggregateSession(s, from, to) {
 // --- Shared aggregation -----------------------------------------------------
 // projectDetail() and overview() once reimplemented the same per-session fold
 // and finalize tail. They now share three pieces: an accumulator (token bundles
-// + counts + per-day chart + punchcard + latency + prev-period), foldSession()
+// + counts + per-day chart + day×hour activity + latency + prev-period), foldSession()
 // to roll one session's in-range aggregate into it, and finalizeCommon() to turn
 // it into the output block both views return. Each function keeps only what's
 // unique to it (the session table; the project leaderboard + budget/plan/worklog).
@@ -1106,7 +1111,7 @@ function newAccumulator() {
     grand: {}, prevGrand: {}, prevErrorFollowup: {},
     bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
     tools: {}, toolErrors: {}, errorFollowup: {},
-    dayMap: {}, punch: emptyPunchGrid(), durations: [],
+    dayMap: {}, dayHours: {}, durations: [],
     editsByFile: {},
     userPrompts: 0, assistantMessages: 0, toolUses: 0,
     commits: 0, prs: 0, edits: 0,
@@ -1146,7 +1151,7 @@ function foldSession(acc, s, agg, from, to) {
   mergeByName(acc.byModel, agg.byModel);
   mergeByName(acc.byEntry, agg.byEntry);
 
-  // Per-day rollup: the daily chart, the punchcard, latency samples, and the
+  // Per-day rollup: the daily chart, the day×hour activity grid, latency samples, and the
   // span of days that actually carried activity.
   for (const [day, d] of Object.entries(s.days)) {
     if (!inRange(day, from, to)) continue;
@@ -1154,7 +1159,7 @@ function foldSession(acc, s, agg, from, to) {
     acc.dayMap[day].messages += d.assistantMessages;
     acc.dayMap[day].userPrompts += d.userPrompts;
     for (const [fam, b] of Object.entries(d.byFamily)) addBundle(famBundleIn(acc.dayMap[day].byFamily, fam), b);
-    accumulatePunchcard(acc.punch, day, d);
+    accumulateDayHours(acc.dayHours, day, d);
     if (d.durations && d.durations.length) for (const x of d.durations) acc.durations.push(x);
     acc.turnMs += d.turnMs || 0;
     if (!acc.dataStart || day < acc.dataStart) acc.dataStart = day;
@@ -1186,7 +1191,7 @@ function finalizeCommon(acc, prev) {
     totals,
     daily,
     topTools,
-    punchcard: pricePunchcard(acc.punch),
+    hourly: priceHourly(acc.dayHours),
     topModels,
     topEntrypoints,
     topSkills: priceByName(acc.bySkill),
@@ -1275,7 +1280,7 @@ function projectDetail(folder, from, to) {
       prompt: acc.userPrompts ? c.totals.cost / acc.userPrompts : 0,
     },
     daily: c.daily,
-    punchcard: c.punchcard,
+    hourly: c.hourly,
     topTools: c.topTools,
     topModels: c.topModels,
     topEntrypoints: c.topEntrypoints,
@@ -1466,7 +1471,7 @@ function overview(from, to) {
       prompt: gacc.userPrompts ? c.totals.cost / gacc.userPrompts : 0,
     },
     daily: c.daily,
-    punchcard: c.punchcard,
+    hourly: c.hourly,
     topTools: c.topTools,
     topModels: c.topModels,
     topEntrypoints: c.topEntrypoints,
@@ -1923,9 +1928,9 @@ module.exports = {
   sessionTitle,
   isCommitCommand,
   isPrCommand,
-  emptyPunchGrid,
-  accumulatePunchcard,
-  pricePunchcard,
+  emptyHourRow,
+  accumulateDayHours,
+  priceHourly,
   inRange,
   aggregateSession,
   parseSession,

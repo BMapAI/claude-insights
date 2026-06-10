@@ -46,6 +46,8 @@
   .proj { width: 100%; display: block; text-align: left; font: inherit; color: inherit; background: transparent; padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; }
   .proj:hover { background: var(--panel-2); }
   .proj.active { background: var(--panel-2); border-color: var(--accent); }
+  .proj.idle { opacity: .45; }                 /* no activity in the selected range — dimmed but still navigable */
+  .proj.idle:hover, .proj.active { opacity: 1; }
   .proj.all { border-color: var(--border); background: var(--panel-2); margin-bottom: 10px; }
   .proj.all.active { border-color: var(--accent); }
   .proj .name { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
@@ -153,14 +155,20 @@
   .daystat .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .daystat .v small { color: var(--muted); font-weight: 400; font-size: 11px; }
 
-  /* Activity punchcard (weekday × hour heatmap) */
-  .heat { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 2px; min-width: 540px; }
+  /* Activity heatmap (date × hour) + clickable day list */
+  .heat { display: grid; grid-template-columns: 56px repeat(24, 1fr); gap: 2px; min-width: 560px; }
   .heat .rlab { color: var(--muted); font-size: 10px; display: flex; align-items: center; height: 15px; }
   .heat .cell { height: 15px; border-radius: 2px; background: var(--panel-2); }
   .heat .cell:hover { outline: 1px solid var(--text); }
-  .heataxis { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 2px; margin-top: 4px; }
+  .heataxis { display: grid; grid-template-columns: 56px repeat(24, 1fr); gap: 2px; margin-top: 4px; }
   .heataxis span { color: var(--muted); font-size: 10px; text-align: center; }
   .heatwrap { overflow-x: auto; }
+  .daylist { display: grid; gap: 6px; }
+  .dayrow { display: grid; grid-template-columns: 76px 1fr 88px; gap: 12px; align-items: center; width: 100%; text-align: left; font: inherit; color: inherit; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; cursor: pointer; }
+  .dayrow:hover { border-color: var(--accent); }
+  .dayrow .daybar { height: 8px; border-radius: 4px; background: var(--panel); overflow: hidden; }
+  .dayrow .daybar > span { display: block; height: 100%; background: var(--accent); }
+  .dayrow .daycost { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
 
   /* Live-monitor control */
   .livebtn {
@@ -228,11 +236,16 @@
     <div id="filterbar">
       <span class="fb-label">Range</span>
       <div class="presets" id="presets">
-        <button data-preset="all" class="active">All time</button>
+        <button data-preset="today">Today</button>
+        <button data-preset="yesterday">Yesterday</button>
+        <button data-preset="week">This week</button>
+        <button data-preset="lastweek">Last week</button>
+        <button data-preset="month" class="active">This month</button>
+        <button data-preset="lastmonth">Last month</button>
         <button data-preset="7">7d</button>
         <button data-preset="30">30d</button>
         <button data-preset="90">90d</button>
-        <button data-preset="month">This month</button>
+        <button data-preset="all">All time</button>
       </div>
       <span class="fb-label">Custom</span>
       <input type="date" id="from" class="dateinput" />
@@ -267,6 +280,12 @@ function fmtTokens(n) {
 function fmtDate(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+// A date span, collapsed to a single date when both ends fall on the same day
+// (e.g. the Today / Yesterday ranges) so it doesn't read "Jun 10 → Jun 10".
+function fmtRange(start, end) {
+  const a = fmtDate(start), b = fmtDate(end);
+  return a === b ? a : `${a} → ${b}`;
 }
 function fmtDateTime(ts) {
   if (!ts) return '—';
@@ -304,7 +323,12 @@ let PROJECTS = [];
 let activeId = null;            // sidebar selection: '__all__' or folder id
 let view = { type: 'overview', projectId: null, sessionId: null };
 let range = { from: null, to: null };
+let preset = 'month';           // active preset name, or null for a custom date range
 let lastDaily = null;           // daily series of the loaded view (for today's-spend readout)
+let activityData = null;        // `hourly` map { 'YYYY-MM-DD': { cost:[24], messages:[24] } }
+let activityRange = null;       // resolved { from, to } the activity panel covers
+let activityDay = null;         // drill-down: the day whose hours are shown (>7d view), or null
+const PRESET_NAMES = ['all', 'today', 'yesterday', 'week', 'lastweek', 'month', 'lastmonth', '7', '30', '90'];
 
 function qs() {
   const p = new URLSearchParams();
@@ -321,8 +345,11 @@ function browserQuery() {
   const p = new URLSearchParams();
   if (view.type === 'project' || view.type === 'session') p.set('project', view.projectId);
   if (view.type === 'session') p.set('session', view.sessionId);
-  if (range.from) p.set('from', range.from);
-  if (range.to) p.set('to', range.to);
+  // Encode the chosen preset by name so it survives reload/sharing; 'month' is
+  // the default, so it's left implicit (absence of params → this month). A true
+  // custom range (no preset) is stored as explicit from/to dates.
+  if (preset) { if (preset !== 'month') p.set('range', preset); }
+  else { if (range.from) p.set('from', range.from); if (range.to) p.set('to', range.to); }
   return p.toString();
 }
 function syncURL() {
@@ -331,12 +358,15 @@ function syncURL() {
 }
 function applyURLState() {
   const p = new URLSearchParams(location.search);
+  const rangeName = p.get('range');
   const from = p.get('from') || null;
   const to = p.get('to') || null;
-  range = { from, to };
-  document.getElementById('from').value = from || '';
-  document.getElementById('to').value = to || '';
-  setActivePreset(!from && !to ? 'all' : null);
+  if (rangeName && PRESET_NAMES.includes(rangeName)) { preset = rangeName; range = presetRange(rangeName); }
+  else if (from || to) { preset = null; range = { from, to }; }   // explicit custom range
+  else { preset = 'month'; range = presetRange('month'); }        // default: this month
+  document.getElementById('from').value = range.from || '';
+  document.getElementById('to').value = range.to || '';
+  setActivePreset(preset);
   const project = p.get('project');
   const session = p.get('session');
   if (project && session) { activeId = project; view = { type: 'session', projectId: project, sessionId: session }; }
@@ -352,8 +382,24 @@ function localISO(d) {
 function presetRange(name) {
   const now = new Date();
   const to = localISO(now);
+  const mfirst = (y, m) => `${y}-${String(m + 1).padStart(2, '0')}-01`;          // first day of month m (0-based)
   if (name === 'all') return { from: null, to: null };
-  if (name === 'month') return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to };
+  if (name === 'today') return { from: to, to };
+  if (name === 'yesterday') { const y = localISO(new Date(now.getTime() - 86400000)); return { from: y, to: y }; }
+  if (name === 'week' || name === 'lastweek') {
+    const dow = (now.getDay() + 6) % 7;                                          // 0 = Monday … 6 = Sunday
+    const monday = new Date(now.getTime() - dow * 86400000);
+    if (name === 'week') return { from: localISO(monday), to };                  // this Monday → today
+    return { from: localISO(new Date(monday.getTime() - 7 * 86400000)),          // previous Mon → Sun
+             to: localISO(new Date(monday.getTime() - 86400000)) };
+  }
+  if (name === 'month') return { from: mfirst(now.getFullYear(), now.getMonth()), to };
+  if (name === 'lastmonth') {
+    const y = now.getFullYear(), m = now.getMonth();
+    const ly = m === 0 ? y - 1 : y, lm = m === 0 ? 11 : m - 1;
+    const last = new Date(ly, lm + 1, 0).getDate();                             // last day of that month
+    return { from: mfirst(ly, lm), to: `${ly}-${String(lm + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}` };
+  }
   const days = { '7': 6, '30': 29, '90': 89 }[name] || 0;
   return { from: localISO(new Date(now.getTime() - days * 86400000)), to };
 }
@@ -362,9 +408,10 @@ function setActivePreset(name) {
 }
 function applyRange(newRange, presetName) {
   range = newRange;
+  preset = presetName || null;
   document.getElementById('from').value = newRange.from || '';
   document.getElementById('to').value = newRange.to || '';
-  setActivePreset(presetName || null);
+  setActivePreset(preset);
   syncURL();
   loadProjects().then(() => refresh());
 }
@@ -537,25 +584,94 @@ function dayStatsRow(daily) {
   </div>`;
 }
 // Weekday × hour spend heatmap. Display rows Mon→Sun; cost drives accent opacity.
-const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
-const WD_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-function punchcardSection(pc) {
-  if (!pc || !pc.cost) return '';
-  let max = 0, total = 0;
-  for (let w = 0; w < 7; w++) for (let h = 0; h < 24; h++) { const c = pc.cost[w][h]; total += c; if (c > max) max = c; }
-  if (total <= 0) return '';
-  const rows = WD_ORDER.map((w) => {
-    const cells = pc.cost[w].map((c, h) => {
-      const bg = c > 0 ? `rgba(217,119,87,${(0.14 + 0.86 * (c / max)).toFixed(3)})` : 'var(--panel-2)';
-      return `<div class="cell" style="background:${bg}" title="${WD_LABEL[w]} ${String(h).padStart(2, '0')}:00 UTC — ${fmtUSD(c)} · ${fmtNum(pc.messages[w][h])} msgs"></div>`;
+// Activity panel — range-adaptive. Uses module state (activityData / activityRange
+// / activityDay) so the >7-day drill-down (click a day → its hours → back) can
+// re-render in place without reloading the dashboard. activitySection() is the
+// shell rendered in the view's HTML; renderActivity() fills #activity-body after.
+function shortDate(day) {
+  return new Date(day + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+function rangeSpanDays() {
+  if (!activityRange || !activityRange.from || !activityRange.to) return null; // all time / unbounded
+  const a = Date.parse(activityRange.from + 'T00:00:00Z'), b = Date.parse(activityRange.to + 'T00:00:00Z');
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((b - a) / 86400000) + 1;
+}
+function rangeDates() {
+  const out = [];
+  if (!activityRange || !activityRange.from || !activityRange.to) return out;
+  let t = Date.parse(activityRange.from + 'T00:00:00Z');
+  const end = Date.parse(activityRange.to + 'T00:00:00Z');
+  while (t <= end) { out.push(new Date(t).toISOString().slice(0, 10)); t += 86400000; }
+  return out;
+}
+// A single day's 24 hours as a bar chart (the 1-day view and the drill-down view).
+function hourBars(day) {
+  const d = (activityData && activityData[day]) || { cost: Array(24).fill(0), messages: Array(24).fill(0) };
+  const max = Math.max.apply(null, d.cost.concat(0.0001));
+  const bars = d.cost.map((c, h) =>
+    `<div class="bar-wrap" title="${String(h).padStart(2, '0')}:00 UTC — ${fmtUSD(c)} · ${fmtNum(d.messages[h])} msgs"><div class="bar" style="height:${(c / max * 130).toFixed(1)}px"></div></div>`).join('');
+  const labels = d.cost.map((_, h) => `<span style="flex:1;text-align:center">${h % 6 === 0 ? String(h).padStart(2, '0') : ''}</span>`).join('');
+  return `<div class="chart" style="height:140px">${bars}</div>
+    <div style="display:flex;gap:3px;color:var(--muted);font-size:10px;margin-top:6px">${labels}</div>
+    <div class="hint" style="margin-top:8px">Spend by hour of day (UTC).</div>`;
+}
+// A date × hour heatmap — one row per actual date in the range (the 2–7 day view).
+function dateHeatmap(dates) {
+  let max = 0;
+  for (const day of dates) { const dd = activityData[day]; if (dd) for (const c of dd.cost) if (c > max) max = c; }
+  const rows = dates.map((day) => {
+    const dd = activityData[day] || { cost: Array(24).fill(0), messages: Array(24).fill(0) };
+    const cells = dd.cost.map((c, h) => {
+      const bg = c > 0 ? `rgba(217,119,87,${(0.14 + 0.86 * (c / (max || 1))).toFixed(3)})` : 'var(--panel-2)';
+      return `<div class="cell" style="background:${bg}" title="${shortDate(day)} ${String(h).padStart(2, '0')}:00 UTC — ${fmtUSD(c)} · ${fmtNum(dd.messages[h])} msgs"></div>`;
     }).join('');
-    return `<div class="rlab">${WD_LABEL[w]}</div>${cells}`;
+    return `<div class="rlab">${shortDate(day)}</div>${cells}`;
   }).join('');
   const axis = '<span></span>' + Array.from({ length: 24 }, (_, h) => `<span>${h % 6 === 0 ? h : ''}</span>`).join('');
-  return `<div class="section"><h3>Activity by hour (UTC)</h3>
-    <div class="heatwrap"><div class="heat" role="img" aria-label="Activity heatmap: spend by weekday and hour in UTC; peak ${fmtUSD(max)} per hour.">${rows}</div><div class="heataxis" aria-hidden="true">${axis}</div></div>
-    <div class="hint" style="margin-top:8px">Spend intensity by weekday × hour (UTC). Darker = more spend in that hour · peak ${fmtUSD(max)}/hr.</div>
-  </div>`;
+  return `<div class="heatwrap"><div class="heat" role="img" aria-label="Activity heatmap: spend by date and hour (UTC).">${rows}</div><div class="heataxis" aria-hidden="true">${axis}</div></div>
+    <div class="hint" style="margin-top:8px">Spend intensity by hour (UTC). Darker = more spend.</div>`;
+}
+// Clickable per-day list (the >7 day view); a day drills into its hours.
+function dayList(days) {
+  const totals = days.map((day) => ({ day, cost: activityData[day].cost.reduce((s, c) => s + c, 0) }));
+  const max = Math.max.apply(null, totals.map((t) => t.cost).concat(0.0001));
+  const rows = totals.slice().sort((a, b) => b.day.localeCompare(a.day)).map((t) =>
+    `<button type="button" class="dayrow" data-day="${t.day}">
+       <span>${shortDate(t.day)}</span>
+       <span class="daybar"><span style="width:${(t.cost / max * 100).toFixed(1)}%"></span></span>
+       <span class="daycost">${fmtUSD(t.cost)}</span>
+     </button>`).join('');
+  return `<div class="daylist">${rows}</div>
+    <div class="hint" style="margin-top:10px">Spend per day — click a day to see its hour-by-hour breakdown.</div>`;
+}
+function activitySection() {
+  if (!activityData || !Object.keys(activityData).length) return '';
+  return `<div class="section" id="activity-section"><h3 id="activity-title">Activity</h3><div id="activity-body"></div></div>`;
+}
+function renderActivity() {
+  const body = document.getElementById('activity-body');
+  const titleEl = document.getElementById('activity-title');
+  if (!body || !titleEl) return;
+  const days = Object.keys(activityData || {}).sort();
+  if (!days.length) return;
+  const span = rangeSpanDays();
+  if (span === 1) {
+    const day = (activityRange && activityRange.from) || days[0];
+    titleEl.textContent = `Activity by hour — ${fmtDate(day)}`;
+    body.innerHTML = hourBars(day);
+  } else if (span != null && span <= 7) {
+    titleEl.textContent = 'Activity by hour';
+    body.innerHTML = dateHeatmap(rangeDates());
+  } else if (activityDay) {
+    titleEl.textContent = `Activity by hour — ${fmtDate(activityDay)}`;
+    body.innerHTML = `<button type="button" class="backlink" id="activity-back" style="margin:0 0 12px">← all days</button>` + hourBars(activityDay);
+    document.getElementById('activity-back').addEventListener('click', () => { activityDay = null; renderActivity(); });
+  } else {
+    titleEl.textContent = 'Activity by day';
+    body.innerHTML = dayList(days);
+    body.querySelectorAll('.dayrow').forEach((n) => n.addEventListener('click', () => { activityDay = n.dataset.day; renderActivity(); }));
+  }
 }
 function efficiencySection(e) {
   if (!e || e.cost <= 0) return '';
@@ -892,9 +1008,9 @@ function renderProjectList() {
       <div class="meta"><span>${PROJECTS.length} projects · combined</span><span></span></div>
     </button>`;
   el.innerHTML = allRow + PROJECTS.map((p) => `
-    <button type="button" class="proj ${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}"${p.id === activeId ? ' aria-current="true"' : ''}>
+    <button type="button" class="proj ${p.sessions === 0 ? 'idle ' : ''}${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}"${p.id === activeId ? ' aria-current="true"' : ''}>
       <div class="name"><span class="title-cell">${esc(p.name)}</span><span class="cost">${fmtUSD(p.cost)}</span></div>
-      <div class="meta"><span>${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts</span><span>${relTime(p.lastActive)}</span></div>
+      <div class="meta"><span>${p.sessions === 0 ? 'no activity in range' : `${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts`}</span><span>${relTime(p.lastActive)}</span></div>
     </button>`).join('');
   el.querySelectorAll('.proj').forEach((node) => node.addEventListener('click', () => selectProject(node.dataset.id)));
 }
@@ -1000,13 +1116,16 @@ function setLive(on) {
 function renderOverview(d, opts) {
   opts = opts || {};
   lastDaily = d.daily;
+  activityData = d.hourly;
+  activityRange = { from: range.from, to: range.to };
+  if (!opts.preserve) activityDay = null;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
   document.getElementById('detail').innerHTML = `
     <div class="header">
       <h2>All projects</h2>
-      <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtDate(t.start)} → ${fmtDate(t.end)}</div>
+      <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtRange(t.start, t.end)}</div>
     </div>
     ${verdictSection(d.verdict)}
     ${insightsSection(d.insights)}
@@ -1029,7 +1148,7 @@ function renderOverview(d, opts) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
-    ${punchcardSection(d.punchcard)}
+    ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
@@ -1053,11 +1172,15 @@ function renderOverview(d, opts) {
     th.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && th.dataset.key) { e.preventDefault(); go(); } });
   });
   renderLeaderboard();
+  renderActivity();
 }
 
 function renderDetail(d, opts) {
   opts = opts || {};
   lastDaily = d.daily;
+  activityData = d.hourly;
+  activityRange = { from: range.from, to: range.to };
+  if (!opts.preserve) activityDay = null;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   document.getElementById('detail').innerHTML = `
@@ -1068,7 +1191,7 @@ function renderDetail(d, opts) {
     ${insightsSection(d.insights)}
     ${outputSection(d.output, t.cost)}
     <div class="cards">
-      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', `${fmtDate(t.start)} → ${fmtDate(t.end)}`)}</div></div>
+      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', fmtRange(t.start, t.end))}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
@@ -1083,7 +1206,7 @@ function renderDetail(d, opts) {
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
-    ${punchcardSection(d.punchcard)}
+    ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
@@ -1104,6 +1227,7 @@ function renderDetail(d, opts) {
     th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
   });
   renderSessions();
+  renderActivity();
 }
 
 function renderSession(d) {

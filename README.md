@@ -47,16 +47,19 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
   transcript lines had to be skipped, so an undercount is never silent.
 - **Shareable URLs** — the selected project, session, and date range live in the
   address bar, so any view is bookmarkable, linkable, and back/forward-navigable.
-- **Date-range filter** — All time / 7d / 30d / 90d / this month / custom, applied
-  across every view.
+- **Date-range filter** — Today / Yesterday / This week / Last week / This month
+  *(default)* / Last month / 7d / 30d / 90d / All time / custom, applied across every
+  view. The chosen preset lives in the URL, so it's shareable and survives reload.
 - **Live monitoring** — a **Live** toggle auto-refreshes the current view every 20s
   (no flicker — table sort and scroll position are preserved) so you can watch an
   in-progress session's spend climb. Shows today's spend and "updated Ns ago", pauses
   in a background tab, and remembers the setting across reloads.
-- **Activity analytics** — a weekday × hour **punchcard heatmap** (spend intensity by
-  hour, in UTC), day-level callouts (active days, average per active day, priciest day,
-  busiest day), and a **daily-spend chart stacked by model** so the per-model mix is
-  visible over time. On the per-project and all-projects views.
+- **Activity analytics** — a range-adaptive **Activity** panel (UTC): a 24-hour bar
+  chart for a single day, a date × hour heatmap for a week or less, and a clickable
+  per-day list for longer ranges — click any day to drill into its hour-by-hour
+  breakdown, then back. Plus day-level callouts (active days, average per active day,
+  priciest/busiest day) and a **daily-spend chart stacked by model** so the per-model
+  mix is visible over time. On the per-project and all-projects views.
 - **Budget & burn-rate projection** — set a monthly budget and the All-projects view
   shows month-to-date spend, a projected month-end total at the current pace, and a
   budget bar that flags when you're trending over.
@@ -293,8 +296,8 @@ commits, and files edited. Read-only like the rest of the app.
   and keeps per-day / per-hour / per-model token counts (cost is priced at query time,
   so date filtering and `pricing.json` edits both take effect without re-parsing).
   Parsed sessions are cached by file mtime + size, so only the first scan is slow.
-  `/api/overview` and `/api/project/:id` also return a `punchcard` (a priced 7×24
-  weekday×hour grid), per-model daily costs, exact-model spend (`topModels`),
+  `/api/overview` and `/api/project/:id` also return `hourly` (priced per-day × 24-hour
+  activity, which the client renders adaptively), per-model daily costs, exact-model spend (`topModels`),
   per-entrypoint spend (`topEntrypoints`), a `reliability` summary (tool error rates +
   recovery spend), a `time` summary (turn-latency stats + histogram), and an `output`
   summary (commits / PRs / files touched + cost-per-unit). `/api/overview` also returns
