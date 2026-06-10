@@ -130,6 +130,12 @@ test('parsed session prices through aggregateSession at the same tokens', () => 
   assert.equal(L.aggregateSession(parsed, '2026-03-03', '2026-03-09').has, false);
 });
 
+test('parseSession counts skipped malformed lines instead of dropping them silently', () => {
+  // The fixture appends one '{ this is not valid json' line + blank lines; only
+  // the non-blank unparseable line counts (blanks are skipped before parsing).
+  assert.equal(parsed.parseErrors, 1);
+});
+
 test('parseSession tolerates malformed input and missing files', () => {
   assert.equal(L.parseSession(path.join(dir, 'does-not-exist.jsonl')), null);
   const bad = path.join(dir, 'bad.jsonl');
@@ -137,6 +143,7 @@ test('parseSession tolerates malformed input and missing files', () => {
   const p = L.parseSession(bad);
   assert.ok(p && typeof p.days === 'object');
   assert.equal(Object.keys(p.days).length, 0); // nothing parseable → no day buckets
+  assert.equal(p.parseErrors, 1);              // the one bad line is surfaced, not hidden
 });
 
 test('parseSession caches by mtime + size (same object on repeat reads)', () => {
