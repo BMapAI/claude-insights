@@ -4,8 +4,7 @@
   "private": true,
   "description": "ROI / cost analyzer for Claude Code projects under ~/.claude/projects",
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=22"
