@@ -240,9 +240,9 @@
       <div class="presets" id="presets">
         <button data-preset="today">Today</button>
         <button data-preset="yesterday">Yesterday</button>
-        <button data-preset="week">This week</button>
+        <button data-preset="week" class="active">This week</button>
         <button data-preset="lastweek">Last week</button>
-        <button data-preset="month" class="active">This month</button>
+        <button data-preset="month">This month</button>
         <button data-preset="lastmonth">Last month</button>
         <button data-preset="7">7d</button>
         <button data-preset="30">30d</button>
@@ -331,7 +331,7 @@ let PROJECTS = [];
 let activeId = null;            // sidebar selection: '__all__' or folder id
 let view = { type: 'overview', projectId: null, sessionId: null };
 let range = { from: null, to: null };
-let preset = 'month';           // active preset name, or null for a custom date range
+let preset = 'week';            // active preset name, or null for a custom date range
 let lastDaily = null;           // daily series of the loaded view (for today's-spend readout)
 let activityData = null;        // `hourly` map { 'YYYY-MM-DD': { cost:[24], messages:[24] } }
 let activityRange = null;       // resolved { from, to } the activity panel covers
@@ -353,10 +353,10 @@ function browserQuery() {
   const p = new URLSearchParams();
   if (view.type === 'project' || view.type === 'session') p.set('project', view.projectId);
   if (view.type === 'session') p.set('session', view.sessionId);
-  // Encode the chosen preset by name so it survives reload/sharing; 'month' is
-  // the default, so it's left implicit (absence of params → this month). A true
+  // Encode the chosen preset by name so it survives reload/sharing; 'week' is
+  // the default, so it's left implicit (absence of params → this week). A true
   // custom range (no preset) is stored as explicit from/to dates.
-  if (preset) { if (preset !== 'month') p.set('range', preset); }
+  if (preset) { if (preset !== 'week') p.set('range', preset); }
   else { if (range.from) p.set('from', range.from); if (range.to) p.set('to', range.to); }
   return p.toString();
 }
@@ -371,7 +371,7 @@ function applyURLState() {
   const to = p.get('to') || null;
   if (rangeName && PRESET_NAMES.includes(rangeName)) { preset = rangeName; range = presetRange(rangeName); }
   else if (from || to) { preset = null; range = { from, to }; }   // explicit custom range
-  else { preset = 'month'; range = presetRange('month'); }        // default: this month
+  else { preset = 'week'; range = presetRange('week'); }          // default: this week
   document.getElementById('from').value = range.from || '';
   document.getElementById('to').value = range.to || '';
   setActivePreset(preset);
@@ -1040,8 +1040,9 @@ function verdictSection(v) {
   const effWord = v.efficiency.tone === 'good' ? 'lean' : (v.efficiency.tone === 'warn' ? 'leaky' : 'fair');
   const o = v.output;
 
+  const sv = v.savings || { cache: 0, modelHeadroom: 0 };
   const summary = [
-    v.value ? `${lev(v.value.leverage)} your plan` : 'plan fee not set',
+    v.value ? `${lev(v.value.leverage)} your plan` : (sv.cache > 0 ? `${fmtUSD(sv.cache)} saved on cache` : 'plan fee not set'),
     `${effWord} spend`,
     `${fmtNum(o.commits)} commit${o.commits === 1 ? '' : 's'}`,
   ].join('  ·  ');
@@ -1052,8 +1053,12 @@ function verdictSection(v) {
       `<b style="color:${vtone(v.value.tone)}">${lev(v.value.leverage)}</b> your plan fee`,
       `vs ${fmtUSD(v.value.proratedFee)} of fee over ${fmtNum(v.rangeDays)}d — API-equivalent usage ${v.value.leverage >= 1 ? 'above' : 'below'} what you paid.`]);
   } else {
-    rows.push(['Value for money', '<span class="loading">not graded</span>',
-      'Set <code>planMonthlyFee</code> in config.json (or <code>PLAN_MONTHLY_FEE</code>) to grade whether usage beats your subscription.']);
+    // No plan fee to grade leverage against — show the concrete dollars the
+    // tooling saved instead of a bare "not graded", and nudge toward setting a fee.
+    const head = sv.cache > 0 ? `<b style="color:var(--good)">${fmtUSD(sv.cache)}</b> saved` : '<span class="loading">not graded</span>';
+    const headroom = sv.modelHeadroom > 0 ? ` Another ~${fmtUSD(sv.modelHeadroom)} sits in model routing — same tokens all-Sonnet.` : '';
+    rows.push(['Savings', head,
+      `Cache reuse saved ${fmtUSD(sv.cache)} vs list input pricing.${headroom} Set <code>planMonthlyFee</code> (config.json / <code>PLAN_MONTHLY_FEE</code>) to grade usage against your subscription.`]);
   }
   rows.push(['Efficiency', `<b style="color:${vtone(v.efficiency.tone)}">${effWord}</b>`,
     `${pct(v.efficiency.cacheHitRate)} cache hit · ${pct(v.efficiency.friction)} of spend on retries / friction.`]);
@@ -1339,6 +1344,12 @@ function setLive(on) {
 }
 
 // --- Views ------------------------------------------------------------------
+// Both the all-projects and per-project views lay sections out in one ROI
+// narrative, top to bottom: the verdict (is it paying off?) → what's worth a
+// look → the scoreboard cards → cost framing (budget / plan) → the return
+// (output / work log) → where the money goes (efficiency, model, attribution) →
+// friction (reliability, latency, signals) → activity over time → sidecar
+// analytics (commands, plans, churn, concurrency) → the drill-in table last.
 function renderOverview(d, opts) {
   opts = opts || {};
   lastDaily = d.daily;
@@ -1355,9 +1366,6 @@ function renderOverview(d, opts) {
     </div>
     ${verdictSection(d.verdict)}
     ${insightsSection(d.insights)}
-    ${budgetSection(d.budget)}
-    ${planSection(d.plan)}
-    ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', 'in selected range')}</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
@@ -1368,23 +1376,26 @@ function renderOverview(d, opts) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
+    ${budgetSection(d.budget)}
+    ${planSection(d.plan)}
+    ${outputSection(d.output, t.cost)}
+    ${worklogSection(d.worklog)}
     ${efficiencySection(d.efficiency)}
-    ${reliabilitySection(d.reliability, t.cost)}
-    ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
+    ${reliabilitySection(d.reliability, t.cost)}
+    ${timeSection(d.time)}
     ${signalsSection(d.signals)}
-    ${commandsSection(d.history)}
-    ${plansSection(d.plans)}
-    ${churnSection(d.churn)}
-    ${sessionsTasksSection(d)}
     <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
-    ${worklogSection(d.worklog)}
+    ${commandsSection(d.history)}
+    ${plansSection(d.plans)}
+    ${churnSection(d.churn)}
+    ${sessionsTasksSection(d)}
     <div class="section">
       <h3>Projects by spend (${d.projects.length}) <a class="csvlink" href="/api/overview.csv${qs()}">⤓ CSV</a></h3>
       <table>
@@ -1422,7 +1433,6 @@ function renderDetail(d, opts) {
       <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
     </div>
     ${insightsSection(d.insights)}
-    ${outputSection(d.output, t.cost)}
     <div class="cards">
       <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', fmtRange(t.start, t.end))}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
@@ -1433,22 +1443,23 @@ function renderDetail(d, opts) {
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
     </div>
+    ${outputSection(d.output, t.cost)}
     ${efficiencySection(d.efficiency)}
-    ${reliabilitySection(d.reliability, t.cost)}
-    ${timeSection(d.time)}
     <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
     ${entrypointSection(d.topEntrypoints)}
     ${attributionSplits(d)}
+    ${reliabilitySection(d.reliability, t.cost)}
+    ${timeSection(d.time)}
     ${signalsSection(d.signals)}
-    ${commandsSection(d.history)}
-    ${plansSection(d.plans)}
-    ${churnSection(d.churn)}
-    ${sessionsTasksSection(d)}
     <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
     ${activitySection()}
     <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
     ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
     ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
+    ${commandsSection(d.history)}
+    ${plansSection(d.plans)}
+    ${churnSection(d.churn)}
+    ${sessionsTasksSection(d)}
     <div class="section">
       <h3>Sessions (${d.sessions.length}) — click a row for details <a class="csvlink" href="/api/project/${encodeURIComponent(d.id)}.csv${qs()}">⤓ CSV</a></h3>
       <table>

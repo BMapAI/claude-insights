@@ -583,6 +583,16 @@ function computeVerdict(m) {
     costPerFile: m.output.costPerFile,
   };
 
+  // Savings — concrete dollar value the tooling delivered, fee or no fee: cache
+  // reuse (vs paying list input price for every cached read) and the model-routing
+  // headroom (same tokens priced entirely on Sonnet). Surfaced so the headline
+  // still says something useful when no plan fee is set to grade value against.
+  const sonnetIf = m.whatIf && m.whatIf.sonnet != null ? m.whatIf.sonnet : null;
+  const savings = {
+    cache: m.cacheSavings || 0,
+    modelHeadroom: sonnetIf != null ? Math.max(0, cost - sonnetIf) : 0,
+  };
+
   // Headline: synthesize one glanceable status + tone from the graded signals.
   // value:warn (underwater) is the strongest negative; then efficiency:warn.
   let status, tone;
@@ -607,7 +617,7 @@ function computeVerdict(m) {
     direction = { tone: dTone, trend, delta, prevCacheHitRate: m.prev.cacheHitRate, prevFriction: m.prev.friction };
   }
 
-  return { tone, status, value, efficiency, output, direction, rangeDays: m.rangeDays };
+  return { tone, status, value, efficiency, output, savings, direction, rangeDays: m.rangeDays };
 }
 
 // --- Insights ("worth a look") ----------------------------------------------
@@ -678,12 +688,20 @@ function computeInsights(v) {
         action: 'Check Tool reliability below — the top failing tool is where the retry cost concentrates.' });
     }
   }
-  // Big move vs the prior equal-length period.
+  // Big move vs the prior equal-length period. When prompt counts are available,
+  // separate "more usage" (cost tracks prompt growth) from "pricier turns" (cost
+  // outran prompts) — the same dollar move means different things and is the most
+  // useful thing to know about a spike.
   if (v.delta && v.delta.costPct != null && Math.abs(v.delta.costPct) >= 0.4 && Math.abs(v.delta.costChange) > 0) {
     const up = v.delta.costChange > 0;
+    let detail = `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).`;
+    if (up && v.delta.promptsPct != null) {
+      detail += v.delta.promptsPct >= v.delta.costPct - 0.1
+        ? ` Prompts rose ${pct(v.delta.promptsPct)} too — mostly more work, not pricier turns.`
+        : ` Prompts changed only ${pct(v.delta.promptsPct)}, so each turn cost more.`;
+    }
     out.push({ kind: 'trend', sev: Math.abs(v.delta.costChange), tone: up ? 'warn' : 'good',
-      title: up ? 'Trending up' : 'Trending down',
-      detail: `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).`,
+      title: up ? 'Trending up' : 'Trending down', detail,
       // Only the upward move warrants a "look into it"; trending down is just good news.
       action: up ? 'Compare the model split and top sessions against the prior period to see what grew.' : undefined });
   }
@@ -743,6 +761,48 @@ function computeInsights(v) {
   if (v.concurrency && v.concurrency.maxConcurrent >= 4) {
     out.push({ kind: 'concurrency', sev: 0, tone: 'info', title: 'Parallel sessions',
       detail: `Up to ${v.concurrency.maxConcurrent} sessions ran at once (${v.concurrency.parallelSessions} of ${v.concurrency.totalSessions} overlapped another).` });
+  }
+  // Model-routing headroom: an Opus-dominated bill where the same tokens priced
+  // entirely on Sonnet would cost materially less. The biggest honest cost lever
+  // — surfaced as where the headroom is, not a quality verdict (that's yours).
+  if (v.efficiency && v.efficiency.whatIf && v.costByFamily && cost > 0) {
+    const opusCost = v.costByFamily.opus || 0;
+    const sonnet = v.efficiency.whatIf.sonnet;
+    const savings = sonnet != null ? cost - sonnet : 0;
+    if (opusCost / cost >= 0.6 && savings >= Math.max(2, 0.20 * cost)) {
+      out.push({ kind: 'model-mix', sev: savings, tone: 'info', title: 'Opus-heavy spend',
+        detail: `Opus drove ${pct(opusCost / cost)} of spend (${usd(opusCost)}). The same tokens priced entirely on Sonnet ≈ ${usd(sonnet)} — about ${usd(savings)} less.`,
+        action: 'Route routine work (edits, boilerplate, simple Q&A) to Sonnet and keep Opus for the hard problems — that is where the headroom is, not a quality call.' });
+    }
+  }
+  // Leaky cache: paying the cache-write premium (writes cost more than fresh
+  // input) without reading it back. A high write share + low hit rate means
+  // caches expire before reuse — long idle gaps, frequent restarts, one-shot runs.
+  if (v.efficiency && v.efficiency.composition && cost > 0) {
+    const cw = v.efficiency.composition.cacheWrite || 0;
+    const hit = v.efficiency.cacheHitRate || 0;
+    if (cw / cost >= 0.25 && hit < 0.40 && cw >= 2) {
+      out.push({ kind: 'cache-write', sev: cw, tone: 'warn', title: 'Leaky cache',
+        detail: `Cache writes were ${usd(cw)} (${pct(cw / cost)} of spend) but only ${pct(hit)} of input was served from cache — you're paying the write premium without reading it back.`,
+        action: 'Cached context only pays off when re-read within its 5m/1h window — keep a task in one active session rather than long idle gaps or frequent restarts.' });
+    }
+  }
+  // Spend with no code trace: money that produced no commits or file edits in
+  // range — research, planning, Q&A, or work that landed outside git. Neutral by
+  // design (Ledger counts artifacts, it doesn't judge). The all-projects view
+  // sums the zero-output projects; the per-project view flags itself.
+  if (Array.isArray(v.projects) && v.projects.length && cost > 0) {
+    const zero = v.projects.filter((p) => !(p.commits || 0) && !(p.filesEdited || 0) && (p.cost || 0) > 0);
+    const zeroCost = zero.reduce((s, p) => s + p.cost, 0);
+    if (zeroCost >= 5 && zeroCost / cost >= 0.25) {
+      out.push({ kind: 'no-output', sev: zeroCost, tone: 'info', title: 'Spend without a code trace',
+        detail: `${usd(zeroCost)} across ${zero.length} project${zero.length === 1 ? '' : 's'} produced no commits or file edits in range — research, planning, or Q&A as far as git/file activity shows.`,
+        action: 'Open those projects to confirm the work landed elsewhere (a plan, a discussion) rather than stalling.' });
+    }
+  } else if (v.output && cost >= 5 && !(v.output.commits || 0) && !(v.output.filesEdited || 0)) {
+    out.push({ kind: 'no-output', sev: cost, tone: 'info', title: 'Spend without a code trace',
+      detail: `${usd(cost)} in range produced no commits or file edits — research, planning, or Q&A as far as git/file activity shows.`,
+      action: 'Check whether the work landed elsewhere (a plan, a discussion) rather than stalling.' });
   }
 
   return out.sort((a, b) => b.sev - a.sev).slice(0, 5);
@@ -1784,7 +1844,7 @@ function projectDetail(folder, from, to) {
     delta: c.delta,
     efficiency: c.efficiency,
     output: c.output,
-    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds }),
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, efficiency: c.efficiency, costByFamily: c.totals.costByFamily, output: c.output }),
     history: analyzeHistory(from, to, cwd || ''),
     churn: analyzeChurn(from, to, new Set(items.map((x) => x.s.id))),
   };
@@ -1942,6 +2002,8 @@ function overview(from, to) {
     cacheHitRate: c.efficiency.cacheHitRate,
     wastedCost: c.reliability.wastedCost,
     output: c.output,
+    cacheSavings: c.totals.cacheSavings,
+    whatIf: c.efficiency.whatIf,
     planFee,
     rangeDays,
     prev: prevEff,
@@ -1987,7 +2049,7 @@ function overview(from, to) {
     delta: c.delta,
     efficiency: c.efficiency,
     output: c.output,
-    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, concurrency }),
+    insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, efficiency: c.efficiency, costByFamily: c.totals.costByFamily, concurrency }),
     history: analyzeHistory(from, to),
     plans: analyzePlans(from, to),
     churn: analyzeChurn(from, to),
