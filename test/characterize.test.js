@@ -110,6 +110,21 @@ if (process.argv.includes('--print')) {
 
 const GOLDEN = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'aggregation.golden.json'), 'utf8'));
 
+// budget pulls four fields straight from the live wall clock (currentMonthInfo),
+// so they can't be frozen in a static golden — they'd drift every day, and
+// daysInMonth/monthStart every month. The fixture's 2023 dates keep every *other*
+// budget field deterministic (mtdCost/projectedCost = 0, plan = null), so these
+// four are the only volatile ones. Assert overview() wires them through from the
+// clock, then sync the golden's copy so the snapshot below covers stable output.
+const CLOCK_FIELDS = ['monthStart', 'today', 'daysElapsed', 'daysInMonth'];
+const liveMonth = L.currentMonthInfo();
+test('overview() budget carries the live current-month clock', () => {
+  for (const k of CLOCK_FIELDS) {
+    assert.strictEqual(actual.ov.budget[k], liveMonth[k], `budget.${k} should come from currentMonthInfo()`);
+  }
+});
+for (const k of CLOCK_FIELDS) GOLDEN.ov.budget[k] = liveMonth[k];
+
 test('overview() output matches the golden snapshot', () => {
   assert.deepStrictEqual(actual.ov, GOLDEN.ov);
 });
