@@ -3,34 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "ROI / cost analyzer for Claude Code projects under ~/.claude/projects",
-  "main": "server.js",
-  "bin": {
-    "claude-ledger": "server.js"
-  },
-  "files": [
-    "server.js",
-    "public/",
-    "pricing.json",
-    "config.json"
-  ],
   "scripts": {
     "start": "node server.js",
     "test": "node --test"
-  },
-  "keywords": [
-    "claude",
-    "claude-code",
-    "cost",
-    "roi",
-    "analytics",
-    "tokens",
-    "dashboard"
-  ],
-  "author": "hpivanov",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/BMapAI/claude-ledger.git"
   },
   "engines": {
     "node": ">=22"
