@@ -810,7 +810,7 @@ function entrypointSection(items) {
   </div>`;
 }
 // Generic spend-split panel: a stacked bar + legend over an arbitrary keyed
-// breakdown (git branch, CLI version, …). Shown only with ≥2 keys carrying spend
+// breakdown (git branch, service tier, …). Shown only with ≥2 keys carrying spend
 // — a single key has no comparison signal (same stance as entrypointSection).
 // `hint` is trusted HTML (callers pass literals, so <code> renders); meta maps a
 // key to a fixed {label,color}, otherwise a label = key and a palette colour.
@@ -823,7 +823,7 @@ function splitSection(title, items, hint, metaMap) {
   if (!items || items.length < 2) return '';
   const total = items.reduce((s, i) => s + i.cost, 0);
   if (total <= 0) return '';
-  // High-cardinality keys (branches, CLI versions) would otherwise paint dozens
+  // High-cardinality keys (branches) would otherwise paint dozens
   // of slivers; show the top few by cost and roll the rest into one "other".
   const MAX = 8;
   const shown = items.slice(0, MAX);
@@ -846,8 +846,7 @@ function splitSection(title, items, hint, metaMap) {
 function attributionSplits(d) {
   return splitSection('Spend by git branch', d.topBranches, 'Cost attributed to the git branch active on each turn — read it as cost per feature/branch.')
     + splitSection('Main thread vs subagents', d.topAgentKinds, 'How much spend ran in Task <strong>subagents</strong> (<code>isSidechain</code>) vs the main thread.', AGENTKIND_META)
-    + splitSection('Service tier', d.topTiers, 'Spend by API service tier — <code>standard</code> vs <code>priority</code>/<code>batch</code>, which bill at different rates.')
-    + splitSection('Claude Code version', d.topVersions, 'Spend by Claude Code CLI version — a cost shift after an upgrade shows up here.');
+    + splitSection('Service tier', d.topTiers, 'Spend by API service tier — <code>standard</code> vs <code>priority</code>/<code>batch</code>, which bill at different rates.');
 }
 // Per-turn signals: extended-thinking usage, context compactions, truncated /
 // refused turns, pasted images, estimated web-tool spend, and how turns ended.

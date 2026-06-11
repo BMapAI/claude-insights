@@ -976,14 +976,12 @@ function parseSession(filePath) {
       //   was delegated to Task subagents (isSidechain) vs the main thread.
       // byTier: { service_tier -> { family -> bundle } } — standard vs priority/batch,
       //   which carry different price multipliers; surfaces a silent tier change.
-      // byVersion: { claudeCodeVersion -> { family -> bundle } } — spend by CLI
-      //   version, so a cost shift can be correlated with an upgrade.
       // turnMs/turns/durations: wall-clock turn latency from `turn_duration`
       //   system records (durations kept for percentiles).
       data.days[key] = {
         userPrompts: 0, assistantMessages: 0, toolUses: 0, tools: {},
         byFamily: {}, bySkill: {}, byMcp: {}, byModel: {}, byEntry: {}, hours: {},
-        byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
+        byBranch: {}, byAgentKind: {}, byTier: {},
         toolErrors: {}, errorFollowup: {},
         // Per-turn signals — counts, not token bundles. stopReasons: { reason ->
         //   count } (how assistant turns ended; max_tokens = truncated, refusal).
@@ -1134,14 +1132,13 @@ function parseSession(filePath) {
         if (msg.model && msg.model !== '<synthetic>') addBundle(nestFam(day.byModel, msg.model, family), bundle);
         // Interactive (cli) vs automated (sdk-cli) spend, keyed by entrypoint.
         addBundle(nestFam(day.byEntry, o.entrypoint || 'unknown', family), bundle);
-        // Spend per git branch / subagent vs main thread / service tier / CLI
-        // version — same tokens, sliced by a few more dimensions present on the
-        // line. Branch can change mid-session, so read it per message (falling
-        // back to the session's first-seen branch, then 'unknown').
+        // Spend per git branch / subagent vs main thread / service tier — same
+        // tokens, sliced by a few more dimensions present on the line. Branch can
+        // change mid-session, so read it per message (falling back to the
+        // session's first-seen branch, then 'unknown').
         addBundle(nestFam(day.byBranch, o.gitBranch || data.gitBranch || 'unknown', family), bundle);
         addBundle(nestFam(day.byAgentKind, o.isSidechain ? 'subagent' : 'main', family), bundle);
         addBundle(nestFam(day.byTier, (u.service_tier || 'standard'), family), bundle);
-        addBundle(nestFam(day.byVersion, o.version || 'unknown', family), bundle);
         // Spend on the turn that followed a failed tool result = recovery cost.
         if (pendingError) {
           addBundle(famBundleIn(day.errorFollowup, family), bundle);
@@ -1187,95 +1184,6 @@ function resolveProjectDir(folder) {
 function projectName(folder, cwd) {
   if (cwd) return path.basename(cwd) || cwd;
   return folder.replace(/^-/, '').replace(/-/g, '/');
-}
-
-// --- Durable rollups (opt-in) ----------------------------------------------
-// Claude Code deletes transcripts after `cleanupPeriodDays`, so the dashboard's
-// history is otherwise capped at whatever is still on disk. When enabled, Ledger
-// persists each *settled* session's parsed day-aggregates to a JSON store OUTSIDE
-// ~/.claude and folds aged-out sessions back into every total and chart. Tokens
-// are stored, never dollars, so pricing.json stays authoritative.
-//
-// Opt-in (the app is read-only by default): set LEDGER_PERSIST=1 to write
-// ~/.claude-ledger/rollups.json, or CLAUDE_LEDGER_DATA=/path/to/file.json.
-const ROLLUP_VERSION = 1;
-function rollupPath() {
-  if (process.env.CLAUDE_LEDGER_DATA) return process.env.CLAUDE_LEDGER_DATA;
-  const flag = process.env.LEDGER_PERSIST;
-  if (flag && flag !== '0' && flag !== 'false') return path.join(os.homedir(), '.claude-ledger', 'rollups.json');
-  return null;
-}
-
-// In-memory mirror of the store, refreshed by file mtime so repeated requests
-// don't re-read it. Shape: { v, sessions: { <folder>: { <id>: { mtimeMs, size, data } } } }.
-let rollupCache = { key: null, mtimeMs: null, store: null };
-function loadRollups() {
-  const p = rollupPath();
-  if (!p) return null;
-  let mtimeMs = null;
-  try { mtimeMs = fs.statSync(p).mtimeMs; } catch {}
-  if (rollupCache.key === p && rollupCache.mtimeMs === mtimeMs && rollupCache.store) return rollupCache.store;
-  let store = { v: ROLLUP_VERSION, sessions: {} };
-  if (mtimeMs != null) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
-      if (parsed && parsed.v === ROLLUP_VERSION && parsed.sessions && typeof parsed.sessions === 'object') store = parsed;
-    } catch { /* malformed → fail safe to transcripts-only */ }
-  }
-  rollupCache = { key: p, mtimeMs, store };
-  return store;
-}
-
-// Persist the settled live sessions seen during a scan (last activity before
-// today, so an in-progress session doesn't rewrite the store every tick). Each
-// entry is keyed by session id and skipped unless its file's mtime+size changed.
-function persistRollups(scanned) {
-  const p = rollupPath();
-  if (!p) return;
-  try {
-    const store = loadRollups();
-    const today = currentMonthInfo().today;
-    let changed = false;
-    for (const { folder, file } of scanned) {
-      const cached = sessionCache.get(file);
-      const data = cached ? cached.data : parseSession(file);
-      if (!data || !data.end || data.end.slice(0, 10) >= today) continue; // unsettled → skip
-      let sig = null;
-      if (cached) sig = { mtimeMs: cached.mtimeMs, size: cached.size };
-      else { try { const st = fs.statSync(file); sig = { mtimeMs: st.mtimeMs, size: st.size }; } catch {} }
-      if (!sig) continue;
-      const bucket = store.sessions[folder] || (store.sessions[folder] = {});
-      const existing = bucket[data.id];
-      if (!existing || existing.mtimeMs !== sig.mtimeMs || existing.size !== sig.size) {
-        bucket[data.id] = { mtimeMs: sig.mtimeMs, size: sig.size, data };
-        changed = true;
-      }
-    }
-    if (changed) {
-      fs.mkdirSync(path.dirname(p), { recursive: true });
-      const tmp = `${p}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(store));
-      fs.renameSync(tmp, p);
-      let m = null; try { m = fs.statSync(p).mtimeMs; } catch {}
-      rollupCache = { key: p, mtimeMs: m, store };
-    }
-  } catch (err) {
-    console.error(`[rollups] persist failed: ${(err && err.message) || err}`);
-  }
-}
-
-// Archived sessions for a project: stored sessions whose transcript is no longer
-// on disk (id not in the live set). Each returned value is parsed-session-shaped,
-// so callers fold it in exactly like a freshly parsed session.
-function archivedFor(folder, liveIds) {
-  const store = loadRollups();
-  if (!store || !store.sessions[folder]) return [];
-  const out = [];
-  for (const [id, entry] of Object.entries(store.sessions[folder])) {
-    if (liveIds.has(id) || !entry || !entry.data) continue;
-    out.push(entry.data);
-  }
-  return out;
 }
 
 // --- Command history + plans (sidecar sources) ------------------------------
@@ -1562,7 +1470,6 @@ function aggregateSession(s, from, to) {
   const byBranch = {};
   const byAgentKind = {};
   const byTier = {};
-  const byVersion = {};
   const tools = {};
   const toolErrors = {};
   const errorFollowup = {};
@@ -1611,9 +1518,8 @@ function aggregateSession(s, from, to) {
     mergeByName(byBranch, d.byBranch || {});
     mergeByName(byAgentKind, d.byAgentKind || {});
     mergeByName(byTier, d.byTier || {});
-    mergeByName(byVersion, d.byVersion || {});
   }
-  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, byVersion, tools, toolErrors, errorFollowup, editsByFile, stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
+  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, tools, toolErrors, errorFollowup, editsByFile, stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
 }
 
 // --- Shared aggregation -----------------------------------------------------
@@ -1627,7 +1533,7 @@ function newAccumulator() {
   return {
     grand: {}, prevGrand: {}, prevErrorFollowup: {},
     bySkill: {}, byMcp: {}, byModel: {}, byEntry: {},
-    byBranch: {}, byAgentKind: {}, byTier: {}, byVersion: {},
+    byBranch: {}, byAgentKind: {}, byTier: {},
     tools: {}, toolErrors: {}, errorFollowup: {},
     stopReasons: {}, compactTrigger: {},
     dayMap: {}, dayHours: {}, durations: [],
@@ -1675,7 +1581,6 @@ function foldSession(acc, s, agg, from, to) {
   mergeByName(acc.byBranch, agg.byBranch);
   mergeByName(acc.byAgentKind, agg.byAgentKind);
   mergeByName(acc.byTier, agg.byTier);
-  mergeByName(acc.byVersion, agg.byVersion);
   // Per-turn signal counters (scalars + two count maps).
   acc.compactions += agg.compactions;
   acc.compactPreTokens += agg.compactPreTokens;
@@ -1726,7 +1631,6 @@ function finalizeCommon(acc, prev) {
   const topBranches = priceByName(acc.byBranch);
   const topAgentKinds = priceByName(acc.byAgentKind);
   const topTiers = priceByName(acc.byTier);
-  const topVersions = priceByName(acc.byVersion);
   const delta = prev ? makeDelta(prev, totals.cost, priceBundles(acc.prevGrand).cost, acc.userPrompts, acc.prevPrompts) : null;
   const output = outputStats({ commits: acc.commits, prs: acc.prs, edits: acc.edits, editsByFile: acc.editsByFile }, totals.cost);
   return {
@@ -1739,7 +1643,6 @@ function finalizeCommon(acc, prev) {
     topBranches,
     topAgentKinds,
     topTiers,
-    topVersions,
     topSkills: priceByName(acc.bySkill),
     topMcp: priceByName(acc.byMcp),
     reliability,
@@ -1756,25 +1659,21 @@ function projectDetail(folder, from, to) {
   const projectPath = resolveProjectDir(folder);
   if (!projectPath) return null;
   const files = listSessionFiles(projectPath);
-  // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
-  const liveIds = new Set();
   const items = [];
   for (const f of files) {
     const s = parseSession(f);
     if (!s) continue;
-    liveIds.add(s.id);
-    items.push({ s, live: true });
+    items.push(s);
   }
-  for (const s of archivedFor(folder, liveIds)) items.push({ s, live: false });
   if (items.length === 0) return null;
 
   const prev = previousPeriod(from, to);
   const acc = newAccumulator();
   let cwd = null;
   let gitBranch = null;
-  const sessions = []; // the per-session table (live sessions only — see below)
+  const sessions = []; // the per-session table
 
-  for (const { s, live } of items) {
+  for (const s of items) {
     if (s.cwd && !cwd) cwd = s.cwd;
     if (s.gitBranch && !gitBranch) gitBranch = s.gitBranch;
 
@@ -1783,7 +1682,6 @@ function projectDetail(folder, from, to) {
     if (!agg.has) continue;
     foldSession(acc, s, agg, from, to);
 
-    if (!live) continue; // archived sessions count in totals but aren't clickable (transcript is gone)
     const priced = priceBundles(agg.byFamily);
     sessions.push({
       id: s.id,
@@ -1834,7 +1732,6 @@ function projectDetail(folder, from, to) {
     topBranches: c.topBranches,
     topAgentKinds: c.topAgentKinds,
     topTiers: c.topTiers,
-    topVersions: c.topVersions,
     topSkills: c.topSkills,
     topMcp: c.topMcp,
     reliability: c.reliability,
@@ -1846,7 +1743,7 @@ function projectDetail(folder, from, to) {
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, efficiency: c.efficiency, costByFamily: c.totals.costByFamily, output: c.output }),
     history: analyzeHistory(from, to, cwd || ''),
-    churn: analyzeChurn(from, to, new Set(items.map((x) => x.s.id))),
+    churn: analyzeChurn(from, to, new Set(items.map((s) => s.id))),
   };
 }
 
@@ -1866,24 +1763,18 @@ function overview(from, to) {
   const themeWords = {};                 // title-word frequency for work-log themes
   let projectCount = 0;
   const projects = [];
-  const scanned = []; // live sessions to persist to the rollup store
   const intervals = []; // [start,end] ms per in-range session, for concurrency
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const projectPath = path.join(PROJECTS_DIR, e.name);
     const files = listSessionFiles(projectPath);
-    // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
-    const liveIds = new Set();
     const items = [];
     for (const f of files) {
       const s = parseSession(f);
       if (!s) continue;
-      liveIds.add(s.id);
       items.push(s);
-      scanned.push({ folder: e.name, file: f });
     }
-    for (const s of archivedFor(e.name, liveIds)) items.push(s);
     if (items.length === 0) continue;
 
     const pacc = newAccumulator(); // this project's slice; merged-by-folding below
@@ -1939,8 +1830,6 @@ function overview(from, to) {
       costPct: prev && prevCost > 0 ? (priced.cost - prevCost) / prevCost : null,
     });
   }
-
-  persistRollups(scanned);
 
   const c = finalizeCommon(gacc, prev);
   const concurrency = sessionConcurrency(intervals); // also feeds the insights engine
@@ -2037,7 +1926,6 @@ function overview(from, to) {
     topBranches: c.topBranches,
     topAgentKinds: c.topAgentKinds,
     topTiers: c.topTiers,
-    topVersions: c.topVersions,
     topSkills: c.topSkills,
     topMcp: c.topMcp,
     reliability: c.reliability,
@@ -2072,23 +1960,17 @@ function listProjects(from, to) {
   const projects = [];
   let minDate = null;
   let maxDate = null;
-  const scanned = []; // live sessions to persist to the rollup store
 
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const projectPath = path.join(PROJECTS_DIR, e.name);
     const files = listSessionFiles(projectPath);
-    // Live sessions (on disk) + archived ones (aged-out, from the rollup store).
-    const liveIds = new Set();
     const items = [];
     for (const f of files) {
       const s = parseSession(f);
       if (!s) continue;
-      liveIds.add(s.id);
       items.push(s);
-      scanned.push({ folder: e.name, file: f });
     }
-    for (const s of archivedFor(e.name, liveIds)) items.push(s);
     if (items.length === 0) continue;
 
     const grand = {};
@@ -2132,7 +2014,6 @@ function listProjects(from, to) {
     });
   }
 
-  persistRollups(scanned);
   projects.sort((a, b) => b.cost - a.cost || (b.lastActive || '').localeCompare(a.lastActive || ''));
   return { projects, bounds: { min: minDate, max: maxDate } };
 }
@@ -2172,7 +2053,6 @@ function sessionDetail(folder, sessionId) {
   const byBranch = {};
   const byAgentKind = {};
   const byTier = {};
-  const byVersion = {};
   const toolErrors = {};
   const errorFollowup = {};
   const toolNames = {};
@@ -2271,7 +2151,6 @@ function sessionDetail(folder, sessionId) {
         addBundle(nestFam(byBranch, o.gitBranch || out.gitBranch || 'unknown', family), fb);
         addBundle(nestFam(byAgentKind, o.isSidechain ? 'subagent' : 'main', family), fb);
         addBundle(nestFam(byTier, (u.service_tier || 'standard'), family), fb);
-        addBundle(nestFam(byVersion, o.version || 'unknown', family), fb);
         if (pendingError) {
           addBundle(famBundleIn(errorFollowup, family), fb);
           pendingError = false;
@@ -2309,7 +2188,6 @@ function sessionDetail(folder, sessionId) {
     topBranches: priceByName(byBranch),
     topAgentKinds: priceByName(byAgentKind),
     topTiers: priceByName(byTier),
-    topVersions: priceByName(byVersion),
     reliability: reliabilityStats(out.tools, toolErrors, errorFollowup),
     time: timeStats(durations, out.prompts.length, priced.cost),
     signals: turnSignals({ stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch }, assistantMessages),
@@ -2545,10 +2423,6 @@ module.exports = {
   inRange,
   aggregateSession,
   parseSession,
-  rollupPath,
-  loadRollups,
-  persistRollups,
-  archivedFor,
   projectDetail,
   overview,
   listProjects,
