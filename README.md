@@ -7,10 +7,6 @@ to per-model pricing, and serves a small web dashboard where you can pick a proj
 (or view all at once) and see what it actually cost — with a glanceable
 **"is the AI paying off?"** verdict up top before the detail.
 
-**▶ [Live demo](https://bmapai.github.io/claude-ledger/)** — the full dashboard on
-synthetic data (date presets, drilldowns, and sorting all work; it's a baked static
-snapshot, so custom ranges, live refresh, and exports are off).
-
 ![Claude Ledger — all-projects overview](docs/overview.png)
 
 <sub>Screenshot uses synthetic demo data.</sub>
