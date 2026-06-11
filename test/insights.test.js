@@ -88,6 +88,30 @@ test('flags truncated turns (>=3 and >=2%) and frequent compaction (>=3)', () =>
   assert.ok(!kinds({ totals: { cost: 100 }, signals: { compactions: 2, truncated: 0, truncationRate: 0, webSearch: 0, webFetch: 0, webCost: 0 } }).includes('compaction'));
 });
 
+// --- Prescriptive actions ---------------------------------------------------
+// Actionable signals carry a suggested next step; purely-informational ones don't.
+const actionFor = (kind, v) => (L.computeInsights(v).find((s) => s.kind === kind) || {}).action;
+
+test('actionable signals carry a suggested next step', () => {
+  assert.match(actionFor('spike', { totals: { cost: 56 }, daily: [{ date: 'a', cost: 5 }, { date: 'b', cost: 6 }, { date: 'c', cost: 5 }, { date: 'd', cost: 40 }] }), /Activity/);
+  assert.match(actionFor('concentration', { totals: { cost: 100 }, projects: [{ name: 'big', cost: 70 }, { name: 'x', cost: 30 }] }), /Open big/);
+  assert.match(actionFor('recovery', { totals: { cost: 100 }, reliability: { wastedCost: 10, totalErrors: 5 } }), /Tool reliability/);
+  assert.match(actionFor('unknown-model', { totals: { cost: 100 }, topModels: [{ name: 'x', cost: 8, unknown: true }, { name: 'claude-opus-4-8', cost: 92 }] }), /pricing\.json/);
+  assert.match(actionFor('truncation', { totals: { cost: 100 }, signals: { truncated: 5, truncationRate: 0.1, compactions: 0, webSearch: 0, webFetch: 0, webCost: 0 } }), /smaller|compact/);
+  assert.match(actionFor('compaction', { totals: { cost: 100 }, signals: { compactions: 4, compactAvgPreTokens: 500000, truncated: 0, truncationRate: 0, webSearch: 0, webFetch: 0, webCost: 0 } }), /fresh session/);
+});
+
+test('trending up gets an action, trending down (good news) does not', () => {
+  assert.match(actionFor('trend', { totals: { cost: 100 }, delta: { costPct: 0.6, costChange: 30, days: 7 } }), /prior period/);
+  assert.equal(actionFor('trend', { totals: { cost: 100 }, delta: { costPct: -0.6, costChange: -30, days: 7 } }), undefined);
+});
+
+test('purely-informational signals carry no action', () => {
+  assert.equal(actionFor('automation', { totals: { cost: 100 }, topEntrypoints: [{ name: 'cli', cost: 40 }, { name: 'sdk-cli', cost: 60 }] }), undefined);
+  assert.equal(actionFor('concurrency', { totals: { cost: 100 }, concurrency: { maxConcurrent: 6, parallelSessions: 10, totalSessions: 12 } }), undefined);
+  assert.equal(actionFor('subagent', { totals: { cost: 100 }, topAgentKinds: [{ name: 'main', cost: 40 }, { name: 'subagent', cost: 60 }] }), undefined);
+});
+
 test('flags high session concurrency at >=4 max concurrent', () => {
   assert.ok(kinds({ totals: { cost: 100 }, concurrency: { maxConcurrent: 6, parallelSessions: 10, totalSessions: 12 } }).includes('concurrency'));
   assert.ok(!kinds({ totals: { cost: 100 }, concurrency: { maxConcurrent: 2, parallelSessions: 1, totalSessions: 5 } }).includes('concurrency'));

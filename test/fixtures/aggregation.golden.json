@@ -445,7 +445,8 @@
         "sev": 0.024135000000000007,
         "tone": "info",
         "title": "Concentrated spend",
-        "detail": "alpha is 68% of all spend ($0.02)."
+        "detail": "alpha is 68% of all spend ($0.02).",
+        "action": "Open alpha to break its spend down by session and model."
       }
     ],
     "history": {

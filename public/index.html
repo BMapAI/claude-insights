@@ -104,6 +104,8 @@
   .insight-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; }
   .insight-title { font-weight: 600; font-size: 13px; }
   .insight-detail { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+  /* Prescriptive next-step under an insight; only present when the signal carries one. */
+  .insight-action { color: var(--accent-2); font-size: 12px; margin-top: 6px; line-height: 1.4; }
 
   /* ROI verdict — the glanceable "is the AI paying off?" headline + sub-scores. */
   .verdict { border-width: 1px; }
@@ -1083,7 +1085,7 @@ function insightsSection(items) {
   const cards = items.map((s) => `
     <div class="insight">
       <span class="insight-dot" style="background:${dot[s.tone] || 'var(--muted)'}"></span>
-      <div><div class="insight-title">${esc(s.title)}</div><div class="insight-detail">${esc(s.detail)}</div></div>
+      <div><div class="insight-title">${esc(s.title)}</div><div class="insight-detail">${esc(s.detail)}</div>${s.action ? `<div class="insight-action">→ ${esc(s.action)}</div>` : ''}</div>
     </div>`).join('');
   return `<div class="section insights"><h3>⚡ Worth a look</h3><div class="insight-list">${cards}</div></div>`;
 }

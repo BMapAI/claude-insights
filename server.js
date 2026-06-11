@@ -612,9 +612,13 @@ function computeVerdict(m) {
 
 // --- Insights ("worth a look") ----------------------------------------------
 // Surface what stands out in the current range so the dashboard points you at it
-// instead of presenting every panel with equal weight. Purely descriptive
-// (observe, don't act) and derived from the same aggregates shown elsewhere;
-// ranked by dollar impact so the top of the list is the most worth noticing.
+// instead of presenting every panel with equal weight. Derived from the same
+// aggregates shown elsewhere and ranked by dollar impact so the top of the list
+// is the most worth noticing. Each signal observes; where there's a clear, honest
+// next step it also carries an `action` — a drill-down within the dashboard, a
+// `pricing.json` fix, or a well-worn usage practice — never a quality judgment
+// and never anything the read-only app does on your behalf. Informational signals
+// (no obvious move) carry no action and the UI just omits the line.
 function median(nums) {
   if (!nums.length) return 0;
   const a = nums.slice().sort((x, y) => x - y);
@@ -641,7 +645,8 @@ function computeInsights(v) {
       const top = active.reduce((a, b) => (b.cost > a.cost ? b : a));
       if (med > 0 && top.cost >= 2.5 * med) {
         out.push({ kind: 'spike', sev: top.cost, tone: 'warn', title: 'Spend spike',
-          detail: `${top.date} cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median active day (${usd(med)}).` });
+          detail: `${top.date} cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median active day (${usd(med)}).`,
+          action: `Open ${top.date} in Activity to see its hour-by-hour breakdown and what ran that day.` });
       }
     }
   }
@@ -651,7 +656,8 @@ function computeInsights(v) {
     const top = v.sessions.reduce((a, b) => (b.cost > a.cost ? b : a));
     if (med > 0 && top.cost >= 3 * med) {
       out.push({ kind: 'session', sev: top.cost, tone: 'info', title: 'Pricey session',
-        detail: `"${(top.title || 'untitled').slice(0, 60)}" cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median session.` });
+        detail: `"${(top.title || 'untitled').slice(0, 60)}" cost ${usd(top.cost)} — ${(top.cost / med).toFixed(1)}× your median session.`,
+        action: 'Open it from the Sessions table to see where the turns and tokens went.' });
     }
   }
   // Spend concentrated in one project (all-projects view).
@@ -659,7 +665,8 @@ function computeInsights(v) {
     const top = v.projects.reduce((a, b) => (b.cost > a.cost ? b : a));
     if (top.cost / cost >= 0.6) {
       out.push({ kind: 'concentration', sev: top.cost, tone: 'info', title: 'Concentrated spend',
-        detail: `${top.name} is ${pct(top.cost / cost)} of all spend (${usd(top.cost)}).` });
+        detail: `${top.name} is ${pct(top.cost / cost)} of all spend (${usd(top.cost)}).`,
+        action: `Open ${top.name} to break its spend down by session and model.` });
     }
   }
   // Recovery spend after failed tool calls (friction).
@@ -667,7 +674,8 @@ function computeInsights(v) {
     const w = v.reliability.wastedCost;
     if (w >= Math.max(0.5, 0.03 * cost)) {
       out.push({ kind: 'recovery', sev: w, tone: 'warn', title: 'Recovery spend',
-        detail: `${usd(w)}${cost > 0 ? ` (${pct(w / cost)})` : ''} spent recovering from ${v.reliability.totalErrors} failed tool calls.` });
+        detail: `${usd(w)}${cost > 0 ? ` (${pct(w / cost)})` : ''} spent recovering from ${v.reliability.totalErrors} failed tool calls.`,
+        action: 'Check Tool reliability below — the top failing tool is where the retry cost concentrates.' });
     }
   }
   // Big move vs the prior equal-length period.
@@ -675,7 +683,9 @@ function computeInsights(v) {
     const up = v.delta.costChange > 0;
     out.push({ kind: 'trend', sev: Math.abs(v.delta.costChange), tone: up ? 'warn' : 'good',
       title: up ? 'Trending up' : 'Trending down',
-      detail: `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).` });
+      detail: `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).`,
+      // Only the upward move warrants a "look into it"; trending down is just good news.
+      action: up ? 'Compare the model split and top sessions against the prior period to see what grew.' : undefined });
   }
   // Automation dominates spend.
   if (Array.isArray(v.topEntrypoints) && v.topEntrypoints.length > 1 && cost > 0) {
@@ -690,7 +700,8 @@ function computeInsights(v) {
     const unknown = v.topModels.filter((m) => m.unknown).reduce((s, m) => s + m.cost, 0);
     if (unknown / cost >= 0.05) {
       out.push({ kind: 'unknown-model', sev: unknown, tone: 'warn', title: 'Unrecognized model',
-        detail: `${pct(unknown / cost)} of spend is on a model id priced as Opus by fallback — the estimate may be off.` });
+        detail: `${pct(unknown / cost)} of spend is on a model id priced as Opus by fallback — the estimate may be off.`,
+        action: "Add this model's real rates to pricing.json so the estimate stops falling back to Opus." });
     }
   }
   // A few slow turns dominate the wait (latency tail, not cost).
@@ -718,13 +729,15 @@ function computeInsights(v) {
   // No clean dollar value, so it ranks below the cost insights (sev 0), like latency.
   if (v.signals && v.signals.truncated >= 3 && v.signals.truncationRate >= 0.02) {
     out.push({ kind: 'truncation', sev: 0, tone: 'warn', title: 'Truncated turns',
-      detail: `${v.signals.truncated} turn${v.signals.truncated === 1 ? '' : 's'} (${pct(v.signals.truncationRate)}) hit the token limit and were cut off — those answers may be incomplete.` });
+      detail: `${v.signals.truncated} turn${v.signals.truncated === 1 ? '' : 's'} (${pct(v.signals.truncationRate)}) hit the token limit and were cut off — those answers may be incomplete.`,
+      action: 'Break very large turns into smaller asks, or compact sooner, so answers are not cut off.' });
   }
   // Frequent context compaction: long sessions repeatedly summarizing context.
   if (v.signals && v.signals.compactions >= 3) {
     const ctx = v.signals.compactAvgPreTokens > 0 ? ` (avg ~${Math.round(v.signals.compactAvgPreTokens / 1000)}K tokens before each)` : '';
     out.push({ kind: 'compaction', sev: 0, tone: 'info', title: 'Frequent compaction',
-      detail: `${v.signals.compactions} context compactions${ctx} — long sessions are repeatedly hitting the context limit.` });
+      detail: `${v.signals.compactions} context compactions${ctx} — long sessions are repeatedly hitting the context limit.`,
+      action: 'Start a fresh session per task — long-running sessions repeatedly hit the context limit.' });
   }
   // High session concurrency: parallel work burns spend faster (all-projects view).
   if (v.concurrency && v.concurrency.maxConcurrent >= 4) {
