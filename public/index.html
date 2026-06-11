@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Claude Ledger — ROI</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpolygon points='12,2 21,7 21,17 12,22 3,17 3,7' fill='%237c8cf8'/%3E%3C/svg%3E" />
 <style>
   :root {
     --bg: #0f1115;
@@ -12,8 +13,9 @@
     --border: #272c38;
     --text: #e6e9ef;
     --muted: #8b93a7;
-    --accent: #d97757;
-    --accent-2: #6ea8fe;
+    --accent: #d97757;     /* spend / cost / money — reserved for dollars + the action list */
+    --accent-2: #6ea8fe;   /* links + informational accents */
+    --brand: #7c8cf8;      /* UI chrome: brand mark, active filter / project / tab */
     --good: #5dd6a0;
     --warn: #e5683f;
     --opus: #d97757;
@@ -41,21 +43,24 @@
   }
   .brand { padding: 18px 18px 12px; border-bottom: 1px solid var(--border); }
   .brand h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .brand h1 .mark { color: var(--brand); }
   .brand .sub { color: var(--muted); font-size: 12px; margin-top: 4px; word-break: break-all; }
   .proj-list { padding: 8px; }
   .proj { width: 100%; display: block; text-align: left; font: inherit; color: inherit; background: transparent; padding: 11px 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; }
   .proj:hover { background: var(--panel-2); }
-  .proj.active { background: var(--panel-2); border-color: var(--accent); }
+  .proj.active { background: var(--panel-2); border-color: var(--brand); }
   .proj.idle { opacity: .45; }                 /* no activity in the selected range — dimmed but still navigable */
   .proj.idle:hover, .proj.active { opacity: 1; }
   .proj.all { border-color: var(--border); background: var(--panel-2); margin-bottom: 10px; }
-  .proj.all.active { border-color: var(--accent); }
+  .proj.all.active { border-color: var(--brand); }
   .proj .name { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
   .proj .name .cost { color: var(--accent); font-variant-numeric: tabular-nums; }
-  .proj .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; justify-content: space-between; }
+  .proj .meta { color: var(--muted); font-size: 12px; margin-top: 5px; display: flex; justify-content: space-between; }
+  .proj-bar { height: 3px; border-radius: 2px; background: var(--bg); overflow: hidden; margin-top: 7px; }
+  .proj-bar > span { display: block; height: 100%; background: var(--accent); opacity: .8; }
 
   #main { flex: 1; height: 100vh; overflow-y: auto; }
-  .inner { padding: 0 32px 32px; }
+  .inner { padding: 0 32px 32px; max-width: 1200px; margin: 0 auto; }
 
   /* Filter bar */
   #filterbar {
@@ -71,7 +76,7 @@
     border-radius: 8px; padding: 6px 11px; font-size: 13px; cursor: pointer;
   }
   .presets button:hover { color: var(--text); }
-  .presets button.active { background: var(--accent); color: #1a1109; border-color: var(--accent); font-weight: 600; }
+  .presets button.active { background: var(--brand); color: #0c1626; border-color: var(--brand); font-weight: 600; }
   .dateinput {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 5px 9px; font-size: 13px; color-scheme: dark;
@@ -85,10 +90,10 @@
   .header .path .branch { color: var(--good); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; margin-left: 8px; font-size: 11px; }
   .backlink { display: inline-block; margin: 18px 0 2px; font-size: 13px; background: none; border: 0; padding: 0; font-family: inherit; color: var(--accent-2); cursor: pointer; }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin: 22px 0; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px; }
-  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
-  .card .value { font-size: 24px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin: 22px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+  .card .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .card .value.cost { color: var(--accent); }
   .card .value.good { color: var(--good); }
   .card .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -163,9 +168,16 @@
   .tabbar { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 18px; border-bottom: 1px solid var(--border); }
   .tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
   .tab:hover { color: var(--text); }
-  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab.active { color: var(--text); border-bottom-color: var(--brand); font-weight: 600; }
   .tabpanel[hidden] { display: none; }
   @media (max-width: 720px) { .herotiles { grid-template-columns: 1fr; } }
+
+  /* Loading skeleton — shimmer blocks shaped like the real layout. */
+  .skeleton { display: grid; gap: 14px; }
+  .sk { border: 1px solid var(--border); border-radius: 12px;
+        background: linear-gradient(90deg, var(--panel) 25%, var(--panel-2) 37%, var(--panel) 63%);
+        background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
+  @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
   .wl-headline { font-size: 15px; font-weight: 600; }
   .wl-meta { color: var(--muted); font-size: 12px; font-weight: 400; }
   .wl-projects { margin-top: 14px; display: grid; gap: 10px; }
@@ -176,10 +188,10 @@
   .budgetbar { position: relative; height: 24px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
   .budgetbar .fill { height: 100%; border-radius: 8px 0 0 8px; transition: width .2s; }
   .budgetbar .marker { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .8; }
-  .effgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-  .eff { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .effgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .eff { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
   .eff .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
-  .eff .value { font-size: 20px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .eff .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .eff .value.good { color: var(--good); }
   .eff .u { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 3px; }
   .budgetcap { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
@@ -191,6 +203,11 @@
   .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
   .chart { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding-top: 8px; }
+  /* Charts with an unbounded bar count (the session "Cost per turn" timeline can
+     have thousands of turns) scroll horizontally instead of overflowing the panel.
+     Extra height + padding leaves room for the scrollbar so tall bars aren't clipped. */
+  .chart.scrollx { overflow-x: auto; overflow-y: hidden; height: 168px; padding-bottom: 8px; }
+  .chart.scrollx .bar-wrap { min-width: 3px; }
   .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 2px; }
   .bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; }
   .bar:hover { opacity: .7; }
@@ -214,7 +231,7 @@
   .heatwrap { overflow-x: auto; }
   .daylist { display: grid; gap: 6px; }
   .dayrow { display: grid; grid-template-columns: 76px 1fr 88px; gap: 12px; align-items: center; width: 100%; text-align: left; font: inherit; color: inherit; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; cursor: pointer; }
-  .dayrow:hover { border-color: var(--accent); }
+  .dayrow:hover { border-color: var(--brand); }
   .dayrow .daybar { height: 8px; border-radius: 4px; background: var(--panel); overflow: hidden; }
   .dayrow .daybar > span { display: block; height: 100%; background: var(--accent); }
   .dayrow .daycost { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -232,6 +249,27 @@
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
   .fb-spacer { flex: 1; }
 
+  /* Sidebar project filter */
+  .proj-search { padding: 10px 12px 4px; }
+  .proj-search input { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px; }
+  .proj-search input::placeholder { color: var(--muted); }
+
+  /* Filter-bar "More" range menu + "Custom…" toggle */
+  .more-wrap { position: relative; display: inline-block; }
+  .more-btn { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+  .more-btn:hover { color: var(--text); }
+  .more-btn.active { color: var(--text); border-color: var(--brand); }
+  .more-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; display: flex; flex-direction: column;
+    gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); min-width: 130px; }
+  .more-menu[hidden] { display: none; }
+  .more-menu button { text-align: left; }
+  .custom-fields { display: inline-flex; align-items: center; gap: 8px; }
+  .custom-fields[hidden] { display: none; }
+  .sidebar-toggle { display: none; }
+
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .3px; }
@@ -242,7 +280,9 @@
   .arrow { font-size: 10px; margin-left: 4px; color: var(--accent); }
   .title-cell { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-link { cursor: pointer; }
+  .row-link td:first-child { box-shadow: inset 2px 0 0 transparent; transition: box-shadow .1s; }
   .row-link:hover { background: var(--panel-2); }
+  .row-link:hover td:first-child { box-shadow: inset 2px 0 0 var(--brand); }
   .rowbtn { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
   .share { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; vertical-align: middle; }
   .share-fill { display: block; height: 100%; background: var(--accent); }
@@ -263,7 +303,11 @@
   @media (max-width: 720px) {
     html, body { height: auto; }
     body { flex-direction: column; min-height: 100%; }
-    #sidebar { width: 100%; min-width: 0; height: auto; max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--border); }
+    /* Sidebar is hidden by default and revealed by the ☰ toggle, so the dashboard
+       (not a long project list) is the first thing on screen. */
+    #sidebar { width: 100%; min-width: 0; height: auto; max-height: 60vh; border-right: 0; border-bottom: 1px solid var(--border); display: none; order: -1; }
+    body.show-projects #sidebar { display: flex; }
+    .sidebar-toggle { display: inline-flex; }
     #main { height: auto; }
     .inner { padding: 0 16px 24px; }
     #filterbar { padding: 12px 16px; gap: 10px; }
@@ -276,30 +320,38 @@
 <body>
   <aside id="sidebar">
     <div class="brand">
-      <h1>⬡ Claude Ledger</h1>
+      <h1><span class="mark">⬡</span> Claude Ledger</h1>
       <div class="sub" id="proj-dir">loading…</div>
     </div>
+    <div class="proj-search"><input id="proj-filter" type="search" placeholder="Filter projects…" autocomplete="off" aria-label="Filter projects" /></div>
     <div class="proj-list" id="proj-list"><div class="loading" style="padding:12px">Scanning projects…</div></div>
   </aside>
   <main id="main">
     <div id="filterbar">
-      <span class="fb-label">Range</span>
+      <button type="button" id="sidebar-toggle" class="livebtn sidebar-toggle" aria-label="Show projects">☰</button>
       <div class="presets" id="presets">
         <button data-preset="today">Today</button>
-        <button data-preset="yesterday">Yesterday</button>
         <button data-preset="week" class="active">This week</button>
-        <button data-preset="lastweek">Last week</button>
         <button data-preset="month">This month</button>
-        <button data-preset="lastmonth">Last month</button>
-        <button data-preset="7">7d</button>
         <button data-preset="30">30d</button>
-        <button data-preset="90">90d</button>
         <button data-preset="all">All time</button>
+        <span class="more-wrap">
+          <button type="button" id="more-btn" class="more-btn" aria-haspopup="true" aria-expanded="false">More ▾</button>
+          <span class="more-menu" id="more-menu" hidden>
+            <button data-preset="yesterday">Yesterday</button>
+            <button data-preset="lastweek">Last week</button>
+            <button data-preset="lastmonth">Last month</button>
+            <button data-preset="7">7d</button>
+            <button data-preset="90">90d</button>
+          </span>
+        </span>
       </div>
-      <span class="fb-label">Custom</span>
-      <input type="date" id="from" class="dateinput" />
-      <span class="fb-dash">–</span>
-      <input type="date" id="to" class="dateinput" />
+      <button type="button" id="custom-btn" class="more-btn">Custom…</button>
+      <span class="custom-fields" id="custom-fields" hidden>
+        <input type="date" id="from" class="dateinput" />
+        <span class="fb-dash">–</span>
+        <input type="date" id="to" class="dateinput" />
+      </span>
       <span class="fb-spacer"></span>
       <button id="live-toggle" class="livebtn" title="Auto-refresh every 20s"><span class="dot"></span>Live</button>
       <span class="fb-label" id="live-status" aria-live="polite"></span>
@@ -405,6 +457,8 @@ function browserQuery() {
   // custom range (no preset) is stored as explicit from/to dates.
   if (preset) { if (preset !== 'week') p.set('range', preset); }
   else { if (range.from) p.set('from', range.from); if (range.to) p.set('to', range.to); }
+  // Remember the open tab (0 = the default, left implicit) so a view is shareable.
+  if (activeTab) p.set('tab', activeTab);
   return p.toString();
 }
 function syncURL() {
@@ -422,6 +476,8 @@ function applyURLState() {
   document.getElementById('from').value = range.from || '';
   document.getElementById('to').value = range.to || '';
   setActivePreset(preset);
+  const tab = parseInt(p.get('tab'), 10);
+  activeTab = Number.isFinite(tab) && tab > 0 ? tab : 0;
   const project = p.get('project');
   const session = p.get('session');
   if (project && session) { activeId = project; view = { type: 'session', projectId: project, sessionId: session }; }
@@ -458,8 +514,21 @@ function presetRange(name) {
   const days = { '7': 6, '30': 29, '90': 89 }[name] || 0;
   return { from: localISO(new Date(now.getTime() - days * 86400000)), to };
 }
+function closeMoreMenu() {
+  const m = document.getElementById('more-menu'), b = document.getElementById('more-btn');
+  if (m) m.hidden = true;
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+const SECONDARY_PRESETS = ['yesterday', 'lastweek', 'lastmonth', '7', '90'];
 function setActivePreset(name) {
-  document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
+  document.querySelectorAll('#presets button[data-preset]').forEach((b) => b.classList.toggle('active', b.dataset.preset === name));
+  const moreBtn = document.getElementById('more-btn');
+  if (moreBtn) moreBtn.classList.toggle('active', SECONDARY_PRESETS.includes(name));
+  // Reveal the custom date fields only for a true custom range (no active preset).
+  const cf = document.getElementById('custom-fields'), cb = document.getElementById('custom-btn');
+  const custom = !name;
+  if (cf) cf.hidden = !custom;
+  if (cb) cb.classList.toggle('active', custom);
 }
 function applyRange(newRange, presetName) {
   range = newRange;
@@ -681,7 +750,8 @@ function dailyChart(daily) {
     const inner = segs || `<div class="bar" style="height:${(d.cost / max * 142).toFixed(1)}px"></div>`;
     return `<div class="bar-wrap" title="${esc(d.date)} — ${fmtUSD(d.cost)} · ${d.messages} msgs${bd ? '\n' + bd : ''}">${inner}</div>`;
   }).join('');
-  return `<div class="chart">${bars}</div>
+  const many = daily.length > 180; // long histories scroll rather than overflow the panel
+  return `<div class="chart${many ? ' scrollx' : ''}">${bars}</div>
     <div class="chart-x"><span>${esc(daily[0].date)}</span><span>peak ${fmtUSD(max)}/day</span><span>${esc(daily[daily.length - 1].date)}</span></div>`;
 }
 // Quick callouts derived from the daily series (active days, average, extremes).
@@ -1110,9 +1180,11 @@ function heroTiles(d, isOverview) {
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const topFam = fams.length && t.cost > 0 ? `${Math.round(fams[0][1] / t.cost * 100)}% ${esc(cap(fams[0][0]))}` : '';
   const proj = isOverview && d.budget ? ` · ~${fmtUSD(d.budget.projectedCost)} projected this month` : '';
+  const vsPrev = d.delta && !d.delta.sparse && d.delta.days >= 7 && d.delta.costPct != null
+    ? `<div class="hsub" style="margin-top:4px">${deltaChip(d.delta.costChange, d.delta.costPct, 'cost')} vs prior ${d.delta.days}d</div>` : '';
   const spend = `<div class="hero"><div class="hlabel">Spend · API-equiv (list price)</div>
     <div class="hbig cost">${fmtUSD(t.cost)}</div>
-    <div class="hsub">${topFam}${proj}</div></div>`;
+    <div class="hsub">${topFam}${proj}</div>${vsPrev}</div>`;
   const o = d.output || {};
   const produced = `<div class="hero"><div class="hlabel">Produced</div>
     <div class="hbig">${fmtNum(o.commits || 0)} <span style="font-size:15px;color:var(--muted);font-weight:600">commits</span></div>
@@ -1189,8 +1261,21 @@ function wireTabs() {
       activeTab = +btn.dataset.tab;
       document.querySelectorAll('.tab').forEach((b) => { const on = +b.dataset.tab === activeTab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
       document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = +p.dataset.panel !== activeTab; });
+      syncURL();
     });
   });
+}
+// Shimmer placeholder shown while a view loads, shaped like the real layout
+// (header line · glance bar · 3 hero tiles · action rows) so the page doesn't
+// jump from a bare "Loading…" to the full dashboard.
+function skeletonView() {
+  const tiles = '<div class="sk" style="height:104px"></div>'.repeat(3);
+  return `<div class="skeleton" aria-busy="true" aria-label="Loading">
+    <div class="sk" style="height:34px;width:200px;margin-top:22px"></div>
+    <div class="sk" style="height:60px"></div>
+    <div class="herotiles" style="margin:0">${tiles}</div>
+    <div class="sk" style="height:150px"></div>
+  </div>`;
 }
 // "What you built" — the accomplishment summary for the range: headline counts,
 // recurring title words, a per-project breakdown, and a Markdown export.
@@ -1230,54 +1315,52 @@ function outputSection(o, cost) {
     <div class="hint" style="margin-top:12px">Output produced during the spend: <code>git commit</code> / <code>gh pr create</code> calls and files touched by Edit/Write, counted from tool calls. A rough activity proxy — not a measure of value or quality.</div>
   </div>`;
 }
-// Plan value: for flat-fee users, API-equivalent usage expressed as leverage
-// over the monthly subscription fee. Overview-only (it's an account-level view).
-function planSection(p) {
-  if (!p) return '';
-  const monthLabel = new Date(p.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const lev = (x) => x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(1)) + '×';
-  return `<div class="section"><h3>Plan value — ${esc(monthLabel)}</h3>
-    <div class="effgrid">
-      <div class="eff"><div class="label">API-equivalent (MTD)</div><div class="value cost">${fmtUSD(p.mtdApiEquiv)}</div></div>
-      <div class="eff"><div class="label">Your plan</div><div class="value">${fmtUSD(p.monthlyFee)}<span class="u">/mo</span></div></div>
-      <div class="eff"><div class="label">Leverage</div><div class="value good">${lev(p.leverage)}</div></div>
-      <div class="eff"><div class="label">Projected leverage</div><div class="value good">${lev(p.projectedLeverage)}</div></div>
-    </div>
-    <div class="hint" style="margin-top:12px">Your usage priced at API list rates vs your flat subscription. <b>Leverage</b> = API-equivalent usage ÷ plan fee — roughly how much metered API the same work would have cost. Not your actual bill.</div>
-  </div>`;
-}
-function budgetSection(b) {
+// "This month" — one account-level panel merging month-to-date spend + projection,
+// the optional budget bar, and (for flat-fee users) leverage over the plan fee.
+// These used to be two near-identical panels (budget + plan value) that both led
+// with the same MTD figure; merged so the number is shown once.
+function monthSection(b, plan) {
   if (!b) return '';
   const monthLabel = new Date(b.today + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const pace = `${b.daysElapsed} of ${b.daysInMonth} days elapsed`;
-  if (b.monthly == null) {
-    return `<div class="section">
-      <h3>This month — ${esc(monthLabel)}</h3>
-      <div class="cards" style="margin:0">
-        <div class="card"><div class="label">Month to date</div><div class="value cost">${fmtUSD(b.mtdCost)}</div><div class="hint">${pace}</div></div>
-        <div class="card"><div class="label">Projected (month end)</div><div class="value cost">${fmtUSD(b.projectedCost)}</div><div class="hint">at current pace</div></div>
+  const lev = (x) => x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(1)) + '×';
+  const tiles = [
+    `<div class="eff"><div class="label">Spent${plan ? ' · API-equiv' : ''}</div><div class="value cost">${fmtUSD(b.mtdCost)}</div><div class="hint">${pace}</div></div>`,
+    `<div class="eff"><div class="label">Projected (month end)</div><div class="value cost">${fmtUSD(b.projectedCost)}</div><div class="hint">at current pace</div></div>`,
+  ];
+  if (plan) {
+    tiles.push(`<div class="eff"><div class="label">Plan fee</div><div class="value">${fmtUSD(plan.monthlyFee)}<span class="u">/mo</span></div></div>`);
+    tiles.push(`<div class="eff"><div class="label">Leverage</div><div class="value good">${lev(plan.leverage)}<span class="u">→ ${lev(plan.projectedLeverage)} proj.</span></div></div>`);
+  }
+  let bar = '';
+  if (b.monthly != null) {
+    const usedW = Math.min(b.pctUsed * 100, 100);
+    const projW = Math.min(b.pctProjected * 100, 100);
+    const color = b.pctProjected > 1 ? 'var(--warn)' : (b.pctProjected > 0.9 ? 'var(--haiku)' : 'var(--good)');
+    const remColor = b.remaining < 0 ? 'var(--warn)' : 'var(--good)';
+    const over = b.pctProjected > 1;
+    bar = `<div style="margin-top:18px">
+      <div class="budgetbar">
+        <div class="fill" style="width:${usedW.toFixed(1)}%;background:${color}"></div>
+        <div class="marker" style="left:${projW.toFixed(1)}%" title="projected ${fmtUSD(b.projectedCost)}"></div>
       </div>
-      <div class="hint" style="margin-top:12px">Set a budget to track it here — add <code>"monthlyBudget"</code> to <code>config.json</code> or set the <code>MONTHLY_BUDGET</code> env var.</div>
+      <div class="budgetcap">
+        <span><b>${fmtUSD(b.mtdCost)}</b> spent <span class="loading">(${(b.pctUsed * 100).toFixed(0)}%)</span></span>
+        <span>projected <b style="color:${color}">${fmtUSD(b.projectedCost)}</b> <span class="loading">(${(b.pctProjected * 100).toFixed(0)}%)</span></span>
+        <span class="loading">budget ${fmtUSD(b.monthly)}</span>
+        <span style="color:${remColor}">${b.remaining >= 0 ? fmtUSD(b.remaining) + ' left' : fmtUSD(-b.remaining) + ' over'}</span>
+      </div>
+      ${over ? `<div class="hint" style="margin-top:10px;color:var(--warn)">⚠ On pace to exceed budget by ${fmtUSD(b.projectedCost - b.monthly)} — ${pace}.</div>` : `<div class="hint" style="margin-top:10px">On track — ${pace}.</div>`}
     </div>`;
   }
-  const usedW = Math.min(b.pctUsed * 100, 100);
-  const projW = Math.min(b.pctProjected * 100, 100);
-  const color = b.pctProjected > 1 ? 'var(--warn)' : (b.pctProjected > 0.9 ? 'var(--haiku)' : 'var(--good)');
-  const remColor = b.remaining < 0 ? 'var(--warn)' : 'var(--good)';
-  const over = b.pctProjected > 1;
-  return `<div class="section">
-    <h3>This month — ${esc(monthLabel)}</h3>
-    <div class="budgetbar">
-      <div class="fill" style="width:${usedW.toFixed(1)}%;background:${color}"></div>
-      <div class="marker" style="left:${projW.toFixed(1)}%" title="projected ${fmtUSD(b.projectedCost)}"></div>
-    </div>
-    <div class="budgetcap">
-      <span><b>${fmtUSD(b.mtdCost)}</b> spent <span class="loading">(${(b.pctUsed * 100).toFixed(0)}%)</span></span>
-      <span>projected <b style="color:${color}">${fmtUSD(b.projectedCost)}</b> <span class="loading">(${(b.pctProjected * 100).toFixed(0)}%)</span></span>
-      <span class="loading">budget ${fmtUSD(b.monthly)}</span>
-      <span style="color:${remColor}">${b.remaining >= 0 ? fmtUSD(b.remaining) + ' left' : fmtUSD(-b.remaining) + ' over'}</span>
-    </div>
-    ${over ? `<div class="hint" style="margin-top:10px;color:var(--warn)">⚠ On pace to exceed budget by ${fmtUSD(b.projectedCost - b.monthly)} — ${pace}.</div>` : `<div class="hint" style="margin-top:10px">On track — ${pace}.</div>`}
+  let hint;
+  if (plan) hint = `Dollars are API-equivalent usage at list rates — <b>not your bill</b>. Leverage = that usage ÷ your $${fmtNum(Math.round(plan.monthlyFee))} plan fee: roughly how much metered API the same work would have cost.`;
+  else if (b.monthly == null) hint = `Add <code>monthlyBudget</code> (<code>MONTHLY_BUDGET</code>) for a budget bar, and <code>planMonthlyFee</code> (<code>PLAN_MONTHLY_FEE</code>) to see leverage over your subscription.`;
+  else hint = '';
+  return `<div class="section"><h3>This month — ${esc(monthLabel)}</h3>
+    <div class="effgrid">${tiles.join('')}</div>
+    ${bar}
+    ${hint ? `<div class="hint" style="margin-top:12px">${hint}</div>` : ''}
   </div>`;
 }
 function deltaChip(change, pct, mode) {
@@ -1296,7 +1379,10 @@ function trendCell(p) {
   return deltaChip(p.cost - p.costPrev, p.costPct, 'cost');
 }
 function deltaHint(delta, kind, fallback) {
-  if (!delta) return fallback;
+  // No prior data, a prior window too sparse to compare (retention edge), or a
+  // sub-week window (too volatile — a partial week vs a weekend swings wildly):
+  // show the neutral fallback instead of a misleading percentage chip.
+  if (!delta || delta.sparse || delta.days < 7) return fallback;
   if (kind === 'cost') return `${deltaChip(delta.costChange, delta.costPct, 'cost')} vs prev ${delta.days}d`;
   return `${deltaChip(delta.promptsChange, delta.promptsPct, 'neutral')} vs prev ${delta.days}d`;
 }
@@ -1324,6 +1410,7 @@ async function loadProjects() {
   renderProjectList();
   return data;
 }
+let projFilter = '';
 function renderProjectList() {
   const el = document.getElementById('proj-list');
   if (!PROJECTS.length) {
@@ -1331,16 +1418,21 @@ function renderProjectList() {
     return;
   }
   const grandTotal = PROJECTS.reduce((s, p) => s + p.cost, 0);
+  const maxCost = Math.max(...PROJECTS.map((p) => p.cost), 0.0001);
+  const q = projFilter.trim().toLowerCase();
+  const shown = q ? PROJECTS.filter((p) => p.name.toLowerCase().includes(q)) : PROJECTS;
   const allRow = `
     <button type="button" class="proj all ${activeId === '__all__' ? 'active' : ''}" data-id="__all__"${activeId === '__all__' ? ' aria-current="true"' : ''}>
       <div class="name"><span class="title-cell">▦ All projects</span><span class="cost">${fmtUSD(grandTotal)}</span></div>
       <div class="meta"><span>${PROJECTS.length} projects · combined</span><span></span></div>
     </button>`;
-  el.innerHTML = allRow + PROJECTS.map((p) => `
+  const rows = shown.map((p) => `
     <button type="button" class="proj ${p.sessions === 0 ? 'idle ' : ''}${p.id === activeId ? 'active' : ''}" data-id="${esc(p.id)}"${p.id === activeId ? ' aria-current="true"' : ''}>
       <div class="name"><span class="title-cell">${esc(p.name)}</span><span class="cost">${fmtUSD(p.cost)}</span></div>
+      <div class="proj-bar"><span style="width:${(p.cost / maxCost * 100).toFixed(1)}%"></span></div>
       <div class="meta"><span>${p.sessions === 0 ? 'no activity in range' : `${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${fmtNum(p.userPrompts)} prompts`}</span><span>${relTime(p.lastActive)}</span></div>
     </button>`).join('');
+  el.innerHTML = allRow + (shown.length ? rows : '<div class="loading" style="padding:12px">No projects match.</div>');
   el.querySelectorAll('.proj').forEach((node) => node.addEventListener('click', () => selectProject(node.dataset.id)));
 }
 
@@ -1348,6 +1440,8 @@ function renderProjectList() {
 function selectProject(id) {
   activeId = id;
   view = { type: id === '__all__' ? 'overview' : 'project', projectId: id, sessionId: null };
+  activeTab = 0;                 // a new view starts on its first tab
+  document.body.classList.remove('show-projects'); // close the mobile drawer on pick
   syncURL();
   renderProjectList();
   refresh();
@@ -1365,7 +1459,7 @@ async function refresh(silent) {
   document.getElementById('empty').style.display = 'none';
   const detail = document.getElementById('detail');
   detail.style.display = 'block';
-  if (!silent) detail.innerHTML = '<div class="loading" style="margin-top:24px">Loading…</div>';
+  if (!silent) detail.innerHTML = skeletonView();
   try {
     if (view.type === 'overview') {
       const res = await fetch('/api/overview' + qs());
@@ -1458,7 +1552,6 @@ function renderOverview(d, opts) {
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
   const cards = `<div class="cards">
-      <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', 'in selected range')}</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
@@ -1486,8 +1579,7 @@ function renderOverview(d, opts) {
     ${tabsHtml([
       { label: 'Spend & efficiency', html:
           cards
-          + budgetSection(d.budget)
-          + planSection(d.plan)
+          + monthSection(d.budget, d.plan)
           + efficiencySection(d.efficiency)
           + `<div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>`
           + entrypointSection(d.topEntrypoints)
@@ -1509,7 +1601,7 @@ function renderOverview(d, opts) {
   leadData = d.projects;
   leadMax = maxCost;
   leadHasPrev = !!d.delta;
-  if (!opts.preserve) { leadSort = { key: 'cost', dir: 'desc' }; activeTab = 0; }
+  if (!opts.preserve) leadSort = { key: 'cost', dir: 'desc' };
   document.querySelectorAll('#lead-head th').forEach((th) => {
     const go = () => onLeadHeader(th.dataset.key);
     th.addEventListener('click', go);
@@ -1530,7 +1622,6 @@ function renderDetail(d, opts) {
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const cards = `<div class="cards">
-      <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', fmtRange(t.start, t.end))}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
       <div class="card"><div class="label">Cost / prompt</div><div class="value cost">${fmtUSD(d.perSession.prompt)}</div><div class="hint">${fmtUSD(d.perSession.cost)} / session</div></div>
@@ -1576,7 +1667,7 @@ function renderDetail(d, opts) {
       { label: 'Sessions', html: sessTable },
     ])}`;
   sessData = d.sessions;
-  if (!opts.preserve) { sessSort = { key: 'end', dir: 'desc' }; activeTab = 0; }
+  if (!opts.preserve) sessSort = { key: 'end', dir: 'desc' };
   document.querySelectorAll('#sess-head th').forEach((th) => {
     const go = () => onSessHeader(th.dataset.key);
     th.addEventListener('click', go);
@@ -1595,9 +1686,11 @@ function renderSession(d) {
   const proj = PROJECTS.find((p) => p.id === d.projectId);
   const projName = proj ? proj.name : 'project';
   const maxStep = Math.max(...d.timeline.map((x) => x.cost), 0.0001);
+  const manyTurns = d.timeline.length > 180; // beyond this the bars hit their min width and the strip scrolls
   const timeline = d.timeline.length
-    ? `<div class="chart">${d.timeline.map((x) => `<div class="bar-wrap" title="${fmtDateTime(x.ts)} — ${fmtUSD(x.cost)} (cum ${fmtUSD(x.cumCost)})"><div class="bar" style="height:${(x.cost / maxStep * 142).toFixed(1)}px"></div></div>`).join('')}</div>
-       <div class="chart-x"><span>start</span><span>peak ${fmtUSD(maxStep)}/turn</span><span>end</span></div>`
+    ? `<div class="chart${manyTurns ? ' scrollx' : ''}">${d.timeline.map((x) => `<div class="bar-wrap" title="${fmtDateTime(x.ts)} — ${fmtUSD(x.cost)} (cum ${fmtUSD(x.cumCost)})"><div class="bar" style="height:${(x.cost / maxStep * 142).toFixed(1)}px"></div></div>`).join('')}</div>
+       <div class="chart-x"><span>start</span><span>peak ${fmtUSD(maxStep)}/turn</span><span>end</span></div>
+       ${manyTurns ? `<div class="hint" style="margin-top:6px">${fmtNum(d.timeline.length)} priced turns — scroll the strip horizontally to see them all.</div>` : ''}`
     : '<div class="loading">No priced turns.</div>';
   document.getElementById('detail').innerHTML = `
     <button type="button" class="backlink" id="sess-back">← ${esc(projName)}</button>
@@ -1637,8 +1730,10 @@ function renderSession(d) {
 
 // --- Init -------------------------------------------------------------------
 async function init() {
-  document.querySelectorAll('#presets button').forEach((b) =>
-    b.addEventListener('click', () => applyRange(presetRange(b.dataset.preset), b.dataset.preset))
+  // Preset buttons (primary row + the ones inside the "More" menu). Selecting one
+  // closes the menu.
+  document.querySelectorAll('#presets button[data-preset]').forEach((b) =>
+    b.addEventListener('click', () => { closeMoreMenu(); applyRange(presetRange(b.dataset.preset), b.dataset.preset); })
   );
   ['from', 'to'].forEach((id) =>
     document.getElementById(id).addEventListener('change', () => {
@@ -1647,6 +1742,25 @@ async function init() {
       applyRange({ from, to }, null);
     })
   );
+  // "More ▾" range menu — toggle, and close on outside click / Escape.
+  const moreBtn = document.getElementById('more-btn'), moreMenu = document.getElementById('more-menu');
+  moreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = moreMenu.hidden;
+    moreMenu.hidden = !open;
+    moreBtn.setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', (e) => { if (!moreMenu.contains(e.target) && e.target !== moreBtn) closeMoreMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMoreMenu(); });
+  // "Custom…" toggles the date fields.
+  document.getElementById('custom-btn').addEventListener('click', () => {
+    const cf = document.getElementById('custom-fields');
+    cf.hidden = !cf.hidden;
+    if (!cf.hidden) document.getElementById('from').focus();
+  });
+  // Sidebar project filter + mobile drawer toggle.
+  document.getElementById('proj-filter').addEventListener('input', (e) => { projFilter = e.target.value; renderProjectList(); });
+  document.getElementById('sidebar-toggle').addEventListener('click', () => document.body.classList.toggle('show-projects'));
   document.getElementById('live-toggle').addEventListener('click', () => setLive(!LIVE.on));
   document.addEventListener('visibilitychange', () => {
     if (!LIVE.on) return;

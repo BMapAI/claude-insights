@@ -227,17 +227,31 @@ function previousPeriod(from, to) {
 }
 
 // Build a delta object comparing current vs previous totals.
-function makeDelta(prev, curCost, prevCost, curPrompts, prevPrompts) {
+// `sparse` flags a prior window with too little activity to compare against —
+// typically the retention edge, where the prior period predates the ~30-day
+// transcript window and holds near-zero data, so any % would be a meaningless
+// blow-up (e.g. "+1229%"). When sparse we null the percentages so the trend
+// insight self-suppresses and the vs-prev chips degrade to a neutral label.
+function makeDelta(prev, curCost, prevCost, curPrompts, prevPrompts, prevActiveDays) {
+  // The prior window is "sparse" — not comparable — when too few of its days saw
+  // any activity. At the retention edge a 30-day prior window may hold a single
+  // retained day, so comparing it to a full current period yields a meaningless
+  // blow-up. Require activity on at least a third of the prior window's days (and
+  // a small absolute floor), else null the percentages so the trend self-suppresses.
+  const cover = prev.len > 0 ? (prevActiveDays || 0) / prev.len : 0;
+  const sparse = prevPrompts < 10 || cover < 0.34;
   return {
     prevFrom: prev.from,
     prevTo: prev.to,
     days: prev.len,
     prevCost,
+    prevActiveDays: prevActiveDays || 0,
     costChange: curCost - prevCost,
-    costPct: prevCost > 0 ? (curCost - prevCost) / prevCost : null,
+    costPct: !sparse && prevCost > 0 ? (curCost - prevCost) / prevCost : null,
     prevPrompts,
     promptsChange: curPrompts - prevPrompts,
-    promptsPct: prevPrompts > 0 ? (curPrompts - prevPrompts) / prevPrompts : null,
+    promptsPct: !sparse && prevPrompts > 0 ? (curPrompts - prevPrompts) / prevPrompts : null,
+    sparse,
   };
 }
 
@@ -1528,9 +1542,10 @@ function aggregateSession(s, from, to) {
   let thinkingTurns = 0, thinkingBlocks = 0, imageTurns = 0, images = 0;
   let webSearch = 0, webFetch = 0;
   let has = false;
+  const days = []; // distinct active day-keys in the window (for prior-period coverage)
   for (const [day, d] of Object.entries(s.days)) {
     if (!inRange(day, from, to)) continue;
-    if (d.userPrompts || d.assistantMessages) has = true;
+    if (d.userPrompts || d.assistantMessages) { has = true; days.push(day); }
     userPrompts += d.userPrompts;
     assistantMessages += d.assistantMessages;
     toolUses += d.toolUses;
@@ -1561,7 +1576,7 @@ function aggregateSession(s, from, to) {
     mergeByName(byAgentKind, d.byAgentKind || {});
     mergeByName(byTier, d.byTier || {});
   }
-  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, tools, toolErrors, errorFollowup, editsByFile, stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch, userPrompts, assistantMessages, toolUses, commits, prs, edits, has };
+  return { byFamily, bySkill, byMcp, byModel, byEntry, byBranch, byAgentKind, byTier, tools, toolErrors, errorFollowup, editsByFile, stopReasons, compactTrigger, compactions, compactPreTokens, compactMs, thinkingTurns, thinkingBlocks, imageTurns, images, webSearch, webFetch, userPrompts, assistantMessages, toolUses, commits, prs, edits, has, days };
 }
 
 // --- Shared aggregation -----------------------------------------------------
@@ -1586,6 +1601,7 @@ function newAccumulator() {
     thinkingTurns: 0, thinkingBlocks: 0, imageTurns: 0, images: 0,
     webSearch: 0, webFetch: 0,
     prevPrompts: 0, turnMs: 0, sessionCount: 0,
+    prevDays: new Set(),
     dataStart: null, dataEnd: null,
   };
 }
@@ -1596,6 +1612,7 @@ function newAccumulator() {
 function foldPrev(acc, pa) {
   if (!pa || !pa.has) return;
   acc.prevPrompts += pa.userPrompts;
+  for (const day of pa.days || []) acc.prevDays.add(day);
   for (const [fam, b] of Object.entries(pa.byFamily)) addBundle(famBundleIn(acc.prevGrand, fam), b);
   // Prior-period recovery spend, so the verdict can grade the efficiency trend.
   for (const [fam, b] of Object.entries(pa.errorFollowup)) addBundle(famBundleIn(acc.prevErrorFollowup, fam), b);
@@ -1673,7 +1690,7 @@ function finalizeCommon(acc, prev) {
   const topBranches = priceByName(acc.byBranch);
   const topAgentKinds = priceByName(acc.byAgentKind);
   const topTiers = priceByName(acc.byTier);
-  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(acc.prevGrand).cost, acc.userPrompts, acc.prevPrompts) : null;
+  const delta = prev ? makeDelta(prev, totals.cost, priceBundles(acc.prevGrand).cost, acc.userPrompts, acc.prevPrompts, acc.prevDays.size) : null;
   const output = outputStats({ commits: acc.commits, prs: acc.prs, edits: acc.edits, editsByFile: acc.editsByFile }, totals.cost);
   return {
     totals,
