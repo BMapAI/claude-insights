@@ -620,6 +620,45 @@ function computeVerdict(m) {
   return { tone, status, value, efficiency, output, savings, direction, rangeDays: m.rangeDays };
 }
 
+// --- Efficiency grade ("where to tighten") ----------------------------------
+// A single A/B/C letter synthesized from the three honest spend levers — cache
+// reuse, retry friction, and model routing — each with its own good/ok/warn band
+// so the UI can show *why* the grade is what it is and point at the lever to pull.
+// Separate from the verdict (value-for-money): for a flat-fee user the verdict is
+// a settled "yes", so this grade is the part of the dashboard that can change.
+function efficiencyGrade(m) {
+  const cost = m.cost || 0;
+  if (cost <= 0) return null;
+  const hit = m.cacheHitRate || 0;
+  const friction = (m.wastedCost || 0) / cost;
+  const opusCost = (m.costByFamily && m.costByFamily.opus) || 0;
+  const opusShare = opusCost / cost;
+  const sonnetIf = m.whatIf && m.whatIf.sonnet != null ? m.whatIf.sonnet : null;
+  const headroom = sonnetIf != null ? Math.max(0, cost - sonnetIf) : 0;
+
+  const cacheTone = hit >= VERDICT.cacheGood ? 'good' : (hit < VERDICT.cacheWeak ? 'warn' : 'ok');
+  const fricTone = friction <= VERDICT.frictionLean ? 'good' : (friction >= VERDICT.frictionLeaky ? 'warn' : 'ok');
+  // Model routing: a mostly-Opus bill with material Sonnet headroom is the lever;
+  // little headroom (already cheap models, or Opus genuinely needed) is well-routed.
+  let modelTone = 'ok';
+  if (opusShare >= 0.6 && headroom >= 0.20 * cost) modelTone = 'warn';
+  else if (headroom < 0.05 * cost) modelTone = 'good';
+
+  const factors = [
+    { key: 'cache', tone: cacheTone, label: 'cache reuse', text: `${Math.round(hit * 100)}% hit` },
+    { key: 'friction', tone: fricTone, label: 'retry friction', text: `${Math.round(friction * 100)}% of spend` },
+    { key: 'model', tone: modelTone, label: 'model routing',
+      text: modelTone === 'warn' ? `${Math.round(opusShare * 100)}% Opus` : (headroom < 0.05 * cost ? 'well-routed' : 'some headroom') },
+  ];
+  const warns = factors.filter((f) => f.tone === 'warn').length;
+  const goods = factors.filter((f) => f.tone === 'good').length;
+  let grade, tone;
+  if (warns >= 2) { grade = 'C'; tone = 'warn'; }
+  else if (warns === 1) { grade = 'B'; tone = goods >= 2 ? 'ok' : 'warn'; }
+  else { grade = goods === 3 ? 'A' : 'B'; tone = 'good'; }
+  return { grade, tone, factors, headroom, opusShare };
+}
+
 // --- Insights ("worth a look") ----------------------------------------------
 // Surface what stands out in the current range so the dashboard points you at it
 // instead of presenting every panel with equal weight. Derived from the same
@@ -692,7 +731,10 @@ function computeInsights(v) {
   // separate "more usage" (cost tracks prompt growth) from "pricier turns" (cost
   // outran prompts) — the same dollar move means different things and is the most
   // useful thing to know about a spike.
-  if (v.delta && v.delta.costPct != null && Math.abs(v.delta.costPct) >= 0.4 && Math.abs(v.delta.costChange) > 0) {
+  // Require a window of at least a week: comparing a partial "this week" (a few
+  // workdays) against the prior equal-length window (which can straddle a weekend)
+  // produces wild, meaningless swings. A ≥7d window makes period-over-period honest.
+  if (v.delta && v.delta.days >= 7 && v.delta.costPct != null && Math.abs(v.delta.costPct) >= 0.4 && Math.abs(v.delta.costChange) > 0) {
     const up = v.delta.costChange > 0;
     let detail = `Spend ${up ? 'up' : 'down'} ${pct(Math.abs(v.delta.costPct))} vs the prior ${v.delta.days}d (${usd(Math.abs(v.delta.costChange))}).`;
     if (up && v.delta.promptsPct != null) {
@@ -805,7 +847,7 @@ function computeInsights(v) {
       action: 'Check whether the work landed elsewhere (a plan, a discussion) rather than stalling.' });
   }
 
-  return out.sort((a, b) => b.sev - a.sev).slice(0, 5);
+  return out.sort((a, b) => b.sev - a.sev).slice(0, 8);
 }
 
 // --- Work log ("what I built") ----------------------------------------------
@@ -1740,6 +1782,7 @@ function projectDetail(folder, from, to) {
     sessions,
     delta: c.delta,
     efficiency: c.efficiency,
+    grade: efficiencyGrade({ cost: c.totals.cost, cacheHitRate: c.efficiency.cacheHitRate, wastedCost: c.reliability.wastedCost, costByFamily: c.totals.costByFamily, whatIf: c.efficiency.whatIf }),
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, sessions, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, efficiency: c.efficiency, costByFamily: c.totals.costByFamily, output: c.output }),
     history: analyzeHistory(from, to, cwd || ''),
@@ -1936,6 +1979,7 @@ function overview(from, to) {
     plan,
     delta: c.delta,
     efficiency: c.efficiency,
+    grade: efficiencyGrade({ cost: c.totals.cost, cacheHitRate: c.efficiency.cacheHitRate, wastedCost: c.reliability.wastedCost, costByFamily: c.totals.costByFamily, whatIf: c.efficiency.whatIf }),
     output: c.output,
     insights: computeInsights({ totals: { cost: c.totals.cost }, daily: c.daily, projects, delta: c.delta, time: c.time, reliability: c.reliability, topModels: c.topModels, topEntrypoints: c.topEntrypoints, signals: c.signals, topAgentKinds: c.topAgentKinds, efficiency: c.efficiency, costByFamily: c.totals.costByFamily, concurrency }),
     history: analyzeHistory(from, to),
@@ -2407,6 +2451,7 @@ module.exports = {
   recordOutput,
   outputStats,
   computeVerdict,
+  efficiencyGrade,
   VERDICT,
   computeInsights,
   promMetrics,

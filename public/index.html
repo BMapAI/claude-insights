@@ -119,6 +119,53 @@
   .vv { font-size: 15px; font-variant-numeric: tabular-nums; }
   .vh { color: var(--muted); font-size: 12px; line-height: 1.4; }
   @media (max-width: 720px) { .vrow { grid-template-columns: 1fr; gap: 3px; } }
+
+  /* Glance bar — the demoted "is it paying off?" verdict, now one honest line. */
+  .glancebar { display: flex; align-items: flex-start; gap: 12px; border-left-width: 4px; }
+  .glancebar .gicon { font-size: 19px; line-height: 1.3; flex: 0 0 auto; }
+  .glancebar .gtext { font-size: 15px; line-height: 1.55; }
+  .glancebar .gmuted { color: var(--muted); }
+
+  /* Three hero tiles: spend · produced · efficiency grade. */
+  .herotiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0 20px; }
+  .hero { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .hero .hlabel { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .hero .hbig { font-size: 30px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .hero .hbig.cost { color: var(--accent); }
+  .hero .hsub { color: var(--muted); font-size: 12px; margin-top: 7px; line-height: 1.5; }
+  .hero .grade { display: inline-flex; align-items: center; justify-content: center; min-width: 50px; height: 50px; border-radius: 12px; font-size: 28px; font-weight: 800; padding: 0 10px; }
+  .hero .bands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+
+  /* Self-grading band pill: a label + value with a tone dot. */
+  .band { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); white-space: nowrap; }
+  .band::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .band.good::before { background: var(--good); }
+  .band.warn::before { background: var(--warn); }
+  .band.ok::before { background: var(--accent-2); }
+
+  /* "Do this" — the ranked, dollar-quantified action list. */
+  .actions { border-color: var(--accent); }
+  .actions h3 { color: var(--accent); }
+  .action-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: act; }
+  .action { display: flex; gap: 12px; align-items: flex-start; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .action::before { counter-increment: act; content: counter(act); flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--panel); border: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 700; }
+  .abody { flex: 1; min-width: 0; }
+  .arow { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .atitle { font-weight: 600; font-size: 14px; }
+  .aimpact { font-weight: 700; font-size: 14px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+  .aimpact small { display: block; font-weight: 400; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+  .adetail { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.5; }
+  .ahow { color: var(--accent-2); font-size: 12px; margin-top: 6px; line-height: 1.4; }
+  .alsonoticed { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.6; }
+  .alsonoticed b { color: var(--text); font-weight: 600; }
+
+  /* Tabs that hold the secondary panels (the former wall of sections). */
+  .tabbar { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 18px; border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabpanel[hidden] { display: none; }
+  @media (max-width: 720px) { .herotiles { grid-template-columns: 1fr; } }
   .wl-headline { font-size: 15px; font-weight: 600; }
   .wl-meta { color: var(--muted); font-size: 12px; font-weight: 400; }
   .wl-projects { margin-top: 14px; display: grid; gap: 10px; }
@@ -1019,79 +1066,131 @@ function reliabilitySection(r, totalCost) {
     <div class="hint" style="margin-top:12px">"Errors" = tool results flagged <code>is_error</code> — includes genuine failures and user-declined/interrupted calls (e.g. a rejected plan or a different answer to a question). "Recovery spend" is the cost of the assistant turn right after a failed result — a proxy for retry cost, not an exact figure.</div>
   </div>`;
 }
-// ROI verdict — the bottom line up top: a glanceable good/ok/warn read on whether
-// the AI is paying off. Grades only value-for-money (usage vs plan fee) and spend
-// efficiency; output is counted, not graded (quality is the user's call).
-function vtone(t) { return t === 'good' ? 'var(--good)' : t === 'warn' ? 'var(--warn)' : 'var(--accent-2)'; }
-function verdictSection(v) {
-  if (!v) return '';
-  const TITLE = {
-    paying_off:   'Paying off',
-    below_fee:    'Below what you pay for',
-    worth_a_look: 'Worth a look',
-    lean_no_fee:  'Spending leanly',
-    set_fee:      'Looking OK',
-  };
-  const title = TITLE[v.status] || 'Summary';
-  const icon = v.tone === 'good' ? '✅' : (v.tone === 'warn' ? '⚠' : '•'); // icon tracks tone, not status
-  const lev = (x) => x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(1)) + '×';
-  const pct = (x) => (x * 100).toFixed(0) + '%';
-  const effWord = v.efficiency.tone === 'good' ? 'lean' : (v.efficiency.tone === 'warn' ? 'leaky' : 'fair');
-  const o = v.output;
+// The old full-width verdict card and "Worth a look" grid were replaced by the
+// glance bar + hero tiles + "Do this" action list below (glanceSection /
+// actionsSection): for a flat-fee user "is it paying off?" is a settled yes, so
+// the screen leads with the part that can change — where to tighten usage.
 
-  const sv = v.savings || { cache: 0, modelHeadroom: 0 };
-  const summary = [
-    v.value ? `${lev(v.value.leverage)} your plan` : (sv.cache > 0 ? `${fmtUSD(sv.cache)} saved on cache` : 'plan fee not set'),
-    `${effWord} spend`,
-    `${fmtNum(o.commits)} commit${o.commits === 1 ? '' : 's'}`,
-  ].join('  ·  ');
-
-  const rows = [];
-  if (v.value) {
-    rows.push(['Value for money',
-      `<b style="color:${vtone(v.value.tone)}">${lev(v.value.leverage)}</b> your plan fee`,
-      `vs ${fmtUSD(v.value.proratedFee)} of fee over ${fmtNum(v.rangeDays)}d — API-equivalent usage ${v.value.leverage >= 1 ? 'above' : 'below'} what you paid.`]);
-  } else {
-    // No plan fee to grade leverage against — show the concrete dollars the
-    // tooling saved instead of a bare "not graded", and nudge toward setting a fee.
-    const head = sv.cache > 0 ? `<b style="color:var(--good)">${fmtUSD(sv.cache)}</b> saved` : '<span class="loading">not graded</span>';
-    const headroom = sv.modelHeadroom > 0 ? ` Another ~${fmtUSD(sv.modelHeadroom)} sits in model routing — same tokens all-Sonnet.` : '';
-    rows.push(['Savings', head,
-      `Cache reuse saved ${fmtUSD(sv.cache)} vs list input pricing.${headroom} Set <code>planMonthlyFee</code> (config.json / <code>PLAN_MONTHLY_FEE</code>) to grade usage against your subscription.`]);
-  }
-  rows.push(['Efficiency', `<b style="color:${vtone(v.efficiency.tone)}">${effWord}</b>`,
-    `${pct(v.efficiency.cacheHitRate)} cache hit · ${pct(v.efficiency.friction)} of spend on retries / friction.`]);
-  if (v.direction) {
-    const dir = v.direction;
-    const arrow = dir.trend === 'improving' ? '▲' : (dir.trend === 'worsening' ? '▼' : '▬');
-    rows.push(['Direction',
-      `<b style="color:${vtone(dir.tone)}">${arrow} ${dir.trend}</b>`,
-      `spend efficiency vs the prior period — cache ${pct(dir.prevCacheHitRate)}→${pct(v.efficiency.cacheHitRate)}, friction ${pct(dir.prevFriction)}→${pct(v.efficiency.friction)}.`]);
-  }
-  rows.push(['Output',
-    `${fmtNum(o.commits)} commits · ${fmtNum(o.filesEdited)} files${o.prs ? ` · ${fmtNum(o.prs)} PRs` : ''}`,
-    `${o.commits ? fmtUSD(o.costPerCommit) + ' / commit · ' : ''}quality is yours to judge — Ledger counts, it doesn't grade.`]);
-
-  const rowHtml = rows.map(([k, val, hint]) =>
-    `<div class="vrow"><div class="vk">${k}</div><div class="vv">${val}</div><div class="vh">${hint}</div></div>`).join('');
-  return `<div class="section verdict" style="border-color:${vtone(v.tone)}">
-    <div class="vhead"><span class="vicon" style="color:${vtone(v.tone)}">${icon}</span>
-      <div><div class="vtitle">${esc(title)} <span class="vsummary" style="text-transform:uppercase;letter-spacing:.4px;font-size:11px">· is the AI paying off?</span></div>
-      <div class="vsummary">${esc(summary)}</div></div></div>
-    <div class="vrows">${rowHtml}</div>
-  </div>`;
+// --- Redesigned glance screen ----------------------------------------------
+// The top of every overview/project view: a demoted one-line verdict, three hero
+// tiles (spend · produced · efficiency grade), then a ranked "Do this" list. The
+// "is it paying off?" question is settled for a flat-fee user, so the screen is
+// built around the part that can actually change — where to tighten usage.
+function toneColor(t) { return t === 'good' ? 'var(--good)' : t === 'warn' ? 'var(--warn)' : 'var(--accent-2)'; }
+function gradeBg(t) { return t === 'good' ? 'rgba(93,214,160,.15)' : t === 'warn' ? 'rgba(229,104,63,.15)' : 'rgba(110,168,254,.15)'; }
+function levX(x) { return x == null ? '—' : (x >= 100 ? Math.round(x) : x.toFixed(x >= 10 ? 0 : 1)) + '×'; }
+function bandTag(f) {
+  const cls = f.tone === 'good' ? 'good' : f.tone === 'warn' ? 'warn' : 'ok';
+  return `<span class="band ${cls}">${esc(f.label)} ${esc(f.text)}</span>`;
 }
-// "Worth a look" — the ranked signals that stand out in the current range, shown
-// first so the dashboard points you at what matters before the wall of detail.
-function insightsSection(items) {
+const VERDICT_TITLE = {
+  paying_off: 'Paying off', below_fee: 'Below what you pay for',
+  worth_a_look: 'Worth a look', lean_no_fee: 'Spending leanly', set_fee: 'Looking OK',
+};
+// The single honest line that replaces the old verdict card.
+function glanceLine(v) {
+  if (!v) return null;
+  const icon = v.tone === 'good' ? '✅' : (v.tone === 'warn' ? '⚠' : '•');
+  const title = `<b>${esc(VERDICT_TITLE[v.status] || 'Summary')}</b>`;
+  if (v.value) {
+    const settled = v.value.leverage >= 3 ? ' — settled.' : '.';
+    const html = `${title} · <b style="color:${toneColor(v.value.tone)}">${levX(v.value.leverage)}</b> your $${fmtNum(Math.round(v.value.monthlyFee))} plan `
+      + `<span class="gmuted">· API-equivalent usage at list price, not your bill${settled} Below: where to tighten.</span>`;
+    return { icon, tone: v.tone, html };
+  }
+  const sv = v.savings || {};
+  const saved = sv.cache > 0 ? `${fmtUSD(sv.cache)} saved on cache reuse. ` : '';
+  const html = `${title} <span class="gmuted">· ${saved}Set <code>planMonthlyFee</code> (or <code>PLAN_MONTHLY_FEE</code>) to grade value against your plan. Below: where to tighten.</span>`;
+  return { icon, tone: v.tone, html };
+}
+// Three hero tiles. isOverview adds the month-end projection to the spend tile.
+function heroTiles(d, isOverview) {
+  const t = d.totals;
+  const fams = Object.entries(t.costByFamily || {}).sort((a, b) => b[1] - a[1]);
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const topFam = fams.length && t.cost > 0 ? `${Math.round(fams[0][1] / t.cost * 100)}% ${esc(cap(fams[0][0]))}` : '';
+  const proj = isOverview && d.budget ? ` · ~${fmtUSD(d.budget.projectedCost)} projected this month` : '';
+  const spend = `<div class="hero"><div class="hlabel">Spend · API-equiv (list price)</div>
+    <div class="hbig cost">${fmtUSD(t.cost)}</div>
+    <div class="hsub">${topFam}${proj}</div></div>`;
+  const o = d.output || {};
+  const produced = `<div class="hero"><div class="hlabel">Produced</div>
+    <div class="hbig">${fmtNum(o.commits || 0)} <span style="font-size:15px;color:var(--muted);font-weight:600">commits</span></div>
+    <div class="hsub">${fmtNum(o.filesEdited || 0)} files${o.prs ? ` · ${fmtNum(o.prs)} PRs` : ''}${o.commits ? ` · ${fmtUSD(o.costPerCommit)}/commit` : ''}</div></div>`;
+  const g = d.grade;
+  let eff;
+  if (g) {
+    const dir = isOverview && d.verdict && d.verdict.direction ? d.verdict.direction : null;
+    const arrow = dir ? (dir.trend === 'improving' ? '▲ improving' : dir.trend === 'worsening' ? '▼ worsening' : '▬ steady') : '';
+    eff = `<div class="hero"><div class="hlabel">Efficiency grade</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
+        <span class="grade" style="color:${toneColor(g.tone)};background:${gradeBg(g.tone)}">${esc(g.grade)}</span>
+        ${arrow ? `<span class="hsub" style="margin:0;color:${toneColor(dir.tone)}">${arrow}</span>` : ''}
+      </div>
+      <div class="bands">${g.factors.map(bandTag).join('')}</div></div>`;
+  } else {
+    eff = `<div class="hero"><div class="hlabel">Efficiency grade</div><div class="hbig">—</div></div>`;
+  }
+  return `<div class="herotiles">${spend}${produced}${eff}</div>`;
+}
+function glanceSection(d, isOverview) {
+  let bar = '';
+  const g = isOverview ? glanceLine(d.verdict) : null;
+  if (g) {
+    bar = `<div class="section glancebar" style="border-left-color:${toneColor(g.tone)}"><span class="gicon">${g.icon}</span><span class="gtext">${g.html}</span></div>`;
+  } else if (d.grade) {
+    bar = `<div class="section glancebar" style="border-left-color:${toneColor(d.grade.tone)}"><span class="gicon">•</span>`
+      + `<span class="gtext"><b>${fmtUSD(d.totals.cost)}</b> spent · efficiency <b style="color:${toneColor(d.grade.tone)}">${esc(d.grade.grade)}</b> <span class="gmuted">— API-equivalent, list price. What to tighten below.</span></span></div>`;
+  }
+  return bar + heroTiles(d, isOverview);
+}
+// "Do this" — ranked actionable insights with a dollar badge where the figure is a
+// real lever (savings/waste), and a compact "also noticed" line for the rest.
+const SAVING_KINDS = { 'model-mix': 'headroom', 'recovery': 'wasted', 'cache-write': 'premium', 'web': 'est.' };
+function actionsSection(items) {
   if (!items || !items.length) return '';
-  const dot = { warn: 'var(--warn)', good: 'var(--good)', info: 'var(--accent-2)' };
-  const cards = items.map((s) => `
-    <div class="insight">
-      <span class="insight-dot" style="background:${dot[s.tone] || 'var(--muted)'}"></span>
-      <div><div class="insight-title">${esc(s.title)}</div><div class="insight-detail">${esc(s.detail)}</div>${s.action ? `<div class="insight-action">→ ${esc(s.action)}</div>` : ''}</div>
-    </div>`).join('');
-  return `<div class="section insights"><h3>⚡ Worth a look</h3><div class="insight-list">${cards}</div></div>`;
+  const actionable = items.filter((s) => s.action);
+  const top = actionable.slice(0, 4);
+  const more = items.filter((s) => !s.action).concat(actionable.slice(4));
+  const also = more.length ? `<div class="alsonoticed">Also worth a look: ${more.map((s) => `<b>${esc(s.title)}</b>`).join(' · ')}</div>` : '';
+  if (!top.length) {
+    return also ? `<div class="section actions"><h3>⚡ Worth a look</h3>${also}</div>` : '';
+  }
+  const lis = top.map((s) => {
+    const showS = SAVING_KINDS[s.kind] && s.sev > 0;
+    const col = s.kind === 'recovery' || s.kind === 'cache-write' ? 'var(--warn)' : 'var(--good)';
+    const impact = showS ? `<span class="aimpact" style="color:${col}">${fmtUSD(s.sev)}<small>${SAVING_KINDS[s.kind]}</small></span>` : '';
+    return `<li class="action"><div class="abody">
+      <div class="arow"><span class="atitle">${esc(s.title)}</span>${impact}</div>
+      <div class="adetail">${esc(s.detail)}</div>
+      <div class="ahow">→ ${esc(s.action)}</div>
+    </div></li>`;
+  }).join('');
+  return `<div class="section actions"><h3>⚡ Do this <span style="text-transform:uppercase;letter-spacing:.4px;font-size:11px;color:var(--muted);font-weight:400">· ranked by impact</span></h3>
+    <ol class="action-list">${lis}</ol>${also}</div>`;
+}
+// Tab container for the secondary panels. activeTab persists across live refresh;
+// reset to 0 on a fresh view load. Panels keep their DOM (tables/charts wired
+// after innerHTML) and just toggle visibility, so sort/scroll survive a tab switch.
+let activeTab = 0;
+function tabsHtml(tabs) {
+  const present = tabs.filter((t) => t.html && t.html.trim());
+  if (!present.length) return '';
+  if (activeTab >= present.length) activeTab = 0;
+  const bar = present.map((t, i) => `<button type="button" class="tab${i === activeTab ? ' active' : ''}" role="tab" aria-selected="${i === activeTab}" data-tab="${i}">${esc(t.label)}</button>`).join('');
+  const panels = present.map((t, i) => `<div class="tabpanel" role="tabpanel" data-panel="${i}"${i === activeTab ? '' : ' hidden'}>${t.html}</div>`).join('');
+  return `<div class="tabs"><div class="tabbar" role="tablist">${bar}</div>${panels}</div>`;
+}
+function wireTabs() {
+  const bar = document.querySelector('.tabbar');
+  if (!bar) return;
+  bar.querySelectorAll('.tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeTab = +btn.dataset.tab;
+      document.querySelectorAll('.tab').forEach((b) => { const on = +b.dataset.tab === activeTab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
+      document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = +p.dataset.panel !== activeTab; });
+    });
+  });
 }
 // "What you built" — the accomplishment summary for the range: headline counts,
 // recurring title words, a per-project breakdown, and a Markdown export.
@@ -1358,14 +1457,7 @@ function renderOverview(d, opts) {
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
   const maxCost = Math.max(...d.projects.map((p) => p.cost), 0.0001);
-  document.getElementById('detail').innerHTML = `
-    <div class="header">
-      <h2>All projects</h2>
-      <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtRange(t.start, t.end)}</div>
-    </div>
-    ${verdictSection(d.verdict)}
-    ${insightsSection(d.insights)}
-    <div class="cards">
+  const cards = `<div class="cards">
       <div class="card"><div class="label">Total spend</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', 'in selected range')}</div></div>
       <div class="card"><div class="label">Projects</div><div class="value">${fmtNum(d.projectCount)}</div><div class="hint">${fmtNum(t.sessions)} sessions</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
@@ -1374,28 +1466,8 @@ function renderOverview(d, opts) {
       <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
-    </div>
-    ${budgetSection(d.budget)}
-    ${planSection(d.plan)}
-    ${outputSection(d.output, t.cost)}
-    ${worklogSection(d.worklog)}
-    ${efficiencySection(d.efficiency)}
-    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
-    ${entrypointSection(d.topEntrypoints)}
-    ${attributionSplits(d)}
-    ${reliabilitySection(d.reliability, t.cost)}
-    ${timeSection(d.time)}
-    ${signalsSection(d.signals)}
-    <div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
-    ${activitySection()}
-    <div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>
-    ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
-    ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
-    ${commandsSection(d.history)}
-    ${plansSection(d.plans)}
-    ${churnSection(d.churn)}
-    ${sessionsTasksSection(d)}
-    <div class="section">
+    </div>`;
+  const leaderboard = `<div class="section">
       <h3>Projects by spend (${d.projects.length}) <a class="csvlink" href="/api/overview.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="lead-head">
@@ -1404,10 +1476,40 @@ function renderOverview(d, opts) {
         <tbody id="lead-body"></tbody>
       </table>
     </div>`;
+  document.getElementById('detail').innerHTML = `
+    <div class="header">
+      <h2>All projects</h2>
+      <div class="path">${fmtNum(d.projectCount)} active projects · ${fmtRange(t.start, t.end)}</div>
+    </div>
+    ${glanceSection(d, true)}
+    ${actionsSection(d.insights)}
+    ${tabsHtml([
+      { label: 'Spend & efficiency', html:
+          cards
+          + budgetSection(d.budget)
+          + planSection(d.plan)
+          + efficiencySection(d.efficiency)
+          + `<div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>`
+          + entrypointSection(d.topEntrypoints)
+          + attributionSplits(d) },
+      { label: 'Output', html:
+          outputSection(d.output, t.cost) + worklogSection(d.worklog) + churnSection(d.churn)
+          + commandsSection(d.history) + plansSection(d.plans) },
+      { label: 'Reliability & time', html:
+          reliabilitySection(d.reliability, t.cost) + timeSection(d.time) + signalsSection(d.signals) },
+      { label: 'Activity', html:
+          `<div class="section"><h3>Daily spend — all projects</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>`
+          + activitySection()
+          + `<div class="section"><h3>Top tools — all projects</h3><div class="tools">${toolChips(d.topTools)}</div></div>`
+          + spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')
+          + spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')
+          + sessionsTasksSection(d) },
+      { label: 'Projects', html: leaderboard },
+    ])}`;
   leadData = d.projects;
   leadMax = maxCost;
   leadHasPrev = !!d.delta;
-  if (!opts.preserve) leadSort = { key: 'cost', dir: 'desc' };
+  if (!opts.preserve) { leadSort = { key: 'cost', dir: 'desc' }; activeTab = 0; }
   document.querySelectorAll('#lead-head th').forEach((th) => {
     const go = () => onLeadHeader(th.dataset.key);
     th.addEventListener('click', go);
@@ -1416,6 +1518,7 @@ function renderOverview(d, opts) {
   renderLeaderboard();
   wireReliability(opts.preserve);
   renderActivity();
+  wireTabs();
 }
 
 function renderDetail(d, opts) {
@@ -1426,13 +1529,7 @@ function renderDetail(d, opts) {
   if (!opts.preserve) activityDay = null;
   const t = d.totals;
   const totalTokens = t.tokens.input + t.tokens.output + t.tokens.cacheRead + t.tokens.cacheWrite;
-  document.getElementById('detail').innerHTML = `
-    <div class="header">
-      <h2>${esc(d.name)}</h2>
-      <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
-    </div>
-    ${insightsSection(d.insights)}
-    <div class="cards">
+  const cards = `<div class="cards">
       <div class="card"><div class="label">Total cost</div><div class="value cost">${fmtUSD(t.cost)}</div><div class="hint">${deltaHint(d.delta, 'cost', fmtRange(t.start, t.end))}</div></div>
       <div class="card"><div class="label">Sessions</div><div class="value">${fmtNum(t.sessions)}</div><div class="hint">of ${fmtNum(t.sessionsTotal)} total</div></div>
       <div class="card"><div class="label">Prompts</div><div class="value">${fmtNum(t.userPrompts)}</div><div class="hint">${deltaHint(d.delta, 'prompts', 'human turns')}</div></div>
@@ -1441,25 +1538,8 @@ function renderDetail(d, opts) {
       <div class="card"><div class="label">Total tokens</div><div class="value">${fmtTokens(totalTokens)}</div><div class="hint">${fmtTokens(t.tokens.output)} output</div></div>
       <div class="card"><div class="label">Cache savings</div><div class="value good">${fmtUSD(d.cacheSavings)}</div><div class="hint">vs. uncached reads</div></div>
       <div class="card"><div class="label">Cache reads</div><div class="value">${fmtTokens(t.tokens.cacheRead)}</div><div class="hint">${fmtTokens(t.tokens.cacheWrite)} written</div></div>
-    </div>
-    ${outputSection(d.output, t.cost)}
-    ${efficiencySection(d.efficiency)}
-    <div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>
-    ${entrypointSection(d.topEntrypoints)}
-    ${attributionSplits(d)}
-    ${reliabilitySection(d.reliability, t.cost)}
-    ${timeSection(d.time)}
-    ${signalsSection(d.signals)}
-    <div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>
-    ${activitySection()}
-    <div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>
-    ${spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')}
-    ${spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')}
-    ${commandsSection(d.history)}
-    ${plansSection(d.plans)}
-    ${churnSection(d.churn)}
-    ${sessionsTasksSection(d)}
-    <div class="section">
+    </div>`;
+  const sessTable = `<div class="section">
       <h3>Sessions (${d.sessions.length}) — click a row for details <a class="csvlink" href="/api/project/${encodeURIComponent(d.id)}.csv${qs()}">⤓ CSV</a></h3>
       <table>
         <thead><tr id="sess-head">
@@ -1468,8 +1548,35 @@ function renderDetail(d, opts) {
         <tbody id="sess-body"></tbody>
       </table>
     </div>`;
+  document.getElementById('detail').innerHTML = `
+    <div class="header">
+      <h2>${esc(d.name)}</h2>
+      <div class="path">${esc(d.cwd)}${d.gitBranch ? `<span class="branch">⎇ ${esc(d.gitBranch)}</span>` : ''}</div>
+    </div>
+    ${glanceSection(d, false)}
+    ${actionsSection(d.insights)}
+    ${tabsHtml([
+      { label: 'Spend & efficiency', html:
+          cards
+          + efficiencySection(d.efficiency)
+          + `<div class="section"><h3>Spend by model</h3>${modelSplit(t.costByFamily, t.cost)}${modelVersions(d.topModels)}</div>`
+          + entrypointSection(d.topEntrypoints)
+          + attributionSplits(d) },
+      { label: 'Output', html:
+          outputSection(d.output, t.cost) + churnSection(d.churn) + commandsSection(d.history) + plansSection(d.plans) },
+      { label: 'Reliability & time', html:
+          reliabilitySection(d.reliability, t.cost) + timeSection(d.time) + signalsSection(d.signals) },
+      { label: 'Activity', html:
+          `<div class="section"><h3>Daily spend</h3>${dayStatsRow(d.daily)}${dailyChart(d.daily)}</div>`
+          + activitySection()
+          + `<div class="section"><h3>Top tools</h3><div class="tools">${toolChips(d.topTools)}</div></div>`
+          + spendSection('Spend by skill', d.topSkills, 'Cost of turns each skill drove (only turns Claude Code tagged with a skill).')
+          + spendSection('Spend by MCP server', d.topMcp, 'Cost of turns attributed to each MCP server.')
+          + sessionsTasksSection(d) },
+      { label: 'Sessions', html: sessTable },
+    ])}`;
   sessData = d.sessions;
-  if (!opts.preserve) sessSort = { key: 'end', dir: 'desc' };
+  if (!opts.preserve) { sessSort = { key: 'end', dir: 'desc' }; activeTab = 0; }
   document.querySelectorAll('#sess-head th').forEach((th) => {
     const go = () => onSessHeader(th.dataset.key);
     th.addEventListener('click', go);
@@ -1478,6 +1585,7 @@ function renderDetail(d, opts) {
   renderSessions();
   wireReliability(opts.preserve);
   renderActivity();
+  wireTabs();
 }
 
 function renderSession(d) {
